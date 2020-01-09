@@ -118,7 +118,7 @@ def compose(funcs):
 def numpyify(x):
     if isinstance(x,np.ndarray): return x
     elif isinstance(x,list): return np.array(x)
-    elif isinstance(x,torch.tensor): return x.numpy()
+    elif torch.is_tensor(x): return x.detach().cpu().numpy()
 
 def scatter_clusters(embeddings,labels):
     palette = ['r','k','y','g','b','m','purple','brown','c','orange']
