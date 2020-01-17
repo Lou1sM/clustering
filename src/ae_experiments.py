@@ -22,74 +22,16 @@ import os
 import psutil
 from shutil import rmtree
 import math
-import random
+import random; random.seed(0)
 import torch.nn.functional as F
 import utils
 import hdbscan
 import umap.umap_ as umap
+from sklearn.metrics import adjusted_rand_score,adjusted_mutual_info_score
 
 
 NZ=50
 
-def reload():
-    import importlib, utils
-    importlib.reload(utils)
-
-def entropy(t,dim):
-#     x=t+torch.logsumexp(t,dim=0)
-    x=t/t.std(dim=dim,keepdim=True)
-    x = F.softmax(x,dim=dim)
-    y = (x+1e-5).log()
-    assert t.shape == x.shape and t.shape== y.shape
-    ent = (-x*y).sum(dim=dim)
-    return ent
-
-class Exemplar():
-    def __init__(self,tensor): self.tensor,self.count,self.age=tensor,0,0
-        
-class Concepts():
-    def __init__(self,dim,opt,thresh,num_starting_concepts=10): 
-        self.dim,self.opt,self.thresh=dim,opt,thresh
-        self.exemplars = []; params = []
-        self.dist_func = nn.MSELoss()
-        self.exemplars = [Exemplar(normalize(torch.randn(self.dim,device='cuda'))) for _ in range(num_starting_concepts)]
-        params = [ex.tensor for ex in self.exemplars]
-
-        assert len(self) == num_starting_concepts == len(params)
-        self.opt.param_groups = self.opt.param_groups[:2]
-        self.opt.add_param_group({'params': params, 'lr':1e-5})
-        
-    def add_exemplar(self,tensor):
-        new_exemplar = Exemplar(tensor)
-        self.exemplars.append(new_exemplar)
-        return new_exemplar
- 
-    @property
-    def exemplars_as_tensor(self): return torch.stack([e.tensor for e in self.exemplars])
-    def __len__(self): return len(self.exemplars)
-        
-    def interpret_wo_grad(self,inp_,eps):
-        for e in self.exemplars:
-            e.count+=1
-            e.age+=1
-            if e.count - math.log(e.age) > 20: 
-                self.exemplars.remove(e)
-        try: dist,idx = torch.min((self.exemplars_as_tensor-inp_).norm(dim=-1),0)
-        except RuntimeError: pass # No exemplars defined yet
-        if len(self) == 0 or dist > self.thresh:
-            best_match = self.add_exemplar(inp_.data.clone().squeeze(0))
-            dist = torch.tensor(0.,device='cuda')
-        else:
-            best_match = self.exemplars[idx]
-            best_match.count = 0
-            best_match.tensor.lerp_(inp_.data.clone().squeeze(0), eps/(best_match.age+1))
-        #best_match.tensor /= best_match.tensor.norm()
-        #for e in self.exemplars: e.tensor.lerp_(best_match.tensor,-eps/(e.age+1))
-#         if len(self) > 4 and self.thresh < 10: self.thresh *= 1.05
-#         elif len(self) < 4: self.thresh *= 0.95
-        return best_match, dist 
-    
-    
 class ConceptLearner():
     def __init__(self,enc,dec,lin,dataset,opt,loss_func,discrim=None): 
         self.enc,self.dec,self.lin,self.dataset,self.loss_func,self.ce_loss_func = enc,dec,lin,dataset,loss_func,nn.CrossEntropyLoss()
@@ -99,13 +41,6 @@ class ConceptLearner():
         try: rmtree('runs')
         except: pass
         self.writer = SummaryWriter()
-        self.init_concepts(1.)
-        
-    def init_concepts(self,thresh): self.concepts = Concepts(NZ,opt=self.opt,thresh=thresh,num_starting_concepts=0)
-    def test_shapes(self): test_shapes(self.ae)
-    def show_one_concept(self,idx=0): 
-        plt.imshow(self.dec((self.concepts.exemplars[idx].tensor)[None,:,None,None]).squeeze())
-        plt.show()
         
     def train_ae(self,epochs,bs):
         dl = data.DataLoader(self.dataset,batch_sampler=data.BatchSampler(data.RandomSampler(self.dataset),bs,drop_last=True),pin_memory=False)        
@@ -131,15 +66,17 @@ class ConceptLearner():
                 if ARGS.test: self.labels = np.zeros(len(total_latents),dtype=np.int32)
                 else:
                     self.umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(total_latents.squeeze())
-                    self.labels = hdbscan.HDBSCAN(min_samples=1000, min_cluster_size=1000).fit_predict(self.umapped_latents)
+                    self.labels = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500).fit_predict(self.umapped_latents)
                     p = utils.scatter_clusters(self.umapped_latents,self.labels)
                 self.centroids = torch.stack([total_latents[self.labels==i,:,0,0].mean(axis=0) for i in range(max(self.labels)+1)]).cuda()
+                self.check_latents(self.centroids)
                 self.num_classes = max(self.labels+1)
                 d = utils.Dataholder(self.dataset.x,torch.tensor(self.labels,device='cuda').long())
                 self.labeled_ds = utils.TransformDataset(d,[utils.to_float_tensor,utils.add_colour_dimension],x_only=False,device='cuda')
                 self.closs_func=nn.MSELoss(reduction='none')
                 print(f'Num clusters: {self.num_classes}\t Num classified: {sum(self.labels>=0)}')
-                if max(self.labels) > 0 or ARGS.test: self.train_labels(5,bs)
+                print(adjusted_rand_score(self.labels,self.true_labels),adjusted_mutual_info_score(self.labels,self.true_labels))
+                if max(self.labels) > 0 or ARGS.test: self.train_labels(5+epoch,bs)
                     
     def train_labels(self,epochs,bs):
         dl = data.DataLoader(self.labeled_ds,batch_sampler=data.BatchSampler(data.RandomSampler(self.labeled_ds),bs,drop_last=False),pin_memory=False)        
@@ -147,6 +84,8 @@ class ConceptLearner():
             total_rloss = torch.tensor(0.,device='cuda')
             total_closs = torch.tensor(0.,device='cuda')
             total_crloss = torch.tensor(0.,device='cuda')
+            total_easy_closs = torch.tensor(0.,device='cuda')
+            total_easy_crloss = torch.tensor(0.,device='cuda')
             crlosses = torch.tensor(0.,device='cuda')
             num_easys = 0
             for i, (xb,yb,idx) in enumerate(dl):
@@ -163,34 +102,35 @@ class ConceptLearner():
                 crlosses = crloss_.detach().cpu() if i==0 else torch.cat([crlosses,crloss_.detach().cpu()],dim=0)
                 mask = hmask*crmask
                 num_easys += sum(mask)
-                closs = (crloss_[mask]).mean() + closs_[mask].mean() if mask.any() else torch.tensor(0.,device='cuda')
+                closs = 0.1*(crloss_[mask]).mean() + closs_[mask].mean() if mask.any() else torch.tensor(0.,device='cuda')
                 rloss = torch.tensor(0.,device='cuda') if mask.all() else (rloss_[~mask]).mean() 
                 total_rloss = total_rloss*((i+1)/(i+2)) + rloss_.mean()*(1/(i+2))
                 total_closs = total_closs*((i+1)/(i+2)) + closs_.mean()*(1/(i+2))
-                total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean()*(1/(i+2))
+                total_easy_closs = total_easy_closs*((i+1)/(i+2)) + closs_[mask].mean()*(1/(i+2))
+                total_easy_crloss = total_easy_crloss*((i+1)/(i+2)) + crloss_[mask].mean()*(1/(i+2))
                 loss = rloss + closs
                 loss.backward(); self.opt.step(); self.opt.zero_grad()
             print(f'R Loss {total_rloss.item()}, C Loss: {total_closs.item()}, CR Loss: {total_crloss.item()}, num easys: {num_easys}')
-            set_trace()
             bins = np.linspace(0.01,0.2,3)
             binned = np.digitize(crlosses,bins)
-            utils.scatter_clusters(self.umapped_latents,binned)
-            #umapped_latents = umap.UMAP(random_state=42).fit_transform(forgotten_latents.squeeze())
-            #forgotten_labels = hdbscan.HDBSCAN(min_samples=500, min_cluster_size=500).fit_predict(umapped_latents)
-            #num_new_classes = max(forgotten_labels)+1
-            #forgotten_labels += self.num_classes
-            #self.labels[forgotten_idxs] = forgotten_labels
-            #self.num_classes = max(self.labels) + 1
-            #print(f'Num classes {self.num_classes}')
-            #set_trace()
-            #p = utils.scatter_clusters(umapped_latents,self.labels); p.show()
-            #p = utils.scatter_clusters(umapped_latents,self.true_labels); p.show()
+            binary_labels = crlosses<0.1
     
+    def check_latents(self,latents,show=False):
+        #_, axes = plt.subplots(2,6,figsize=(7,7))
+        _, axes = plt.subplots(6,2,figsize=(7,7))
+        for i,latent in enumerate(latents):
+            try:
+                outimg = self.dec(latent[None,:,None,None])
+                axes.flatten()[i].imshow(outimg[0,0])
+            except: set_trace()
+        if show: plt.show()
+        plt.savefig(f'../experiments/{ARGS.exp_name}/most_recent.png')
+        plt.savefig(f'../experiments/{ARGS.exp_name}/{utils.get_datetime_stamp()}.png')
+
     def check_ae_images(self,num_rows=5):
         idxs = np.random.randint(0,len(self.dataset),size=num_rows*4)
         inimgs = self.dataset[idxs][0]
         x = self.enc(inimgs)
-#         x = self.lin(x[:,:,0,0])[:,:,None,None]
         outimgs = self.dec(x)
         _, axes = plt.subplots(num_rows,4,figsize=(7,7))
         for i in range(num_rows):
@@ -200,20 +140,17 @@ class ConceptLearner():
             axes[i,3].imshow(outimgs[i+num_rows,0])
         plt.show()
 
-    def check_concept_images(self,num_imgs=5):
-        outimgs = self.dec(self.concepts.exemplars_as_tensor[:25,:,None,None]).squeeze(1)
-        num_imgs = min(len(outimgs),25)
-        _, axes = plt.subplots(5,5,figsize=(7,7))
-        for i in range(num_imgs):
-            axes.flatten()[i].imshow(outimgs[i])
-    def vis_latent(self,l): plt.imshow(self.dec(l[None,:,None,None].cuda())[0,0]); plt.show()
-    def vis_ae(self,x): vis_latent(self.enc(x.cuda()).squeeze())
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--test','-t',action='store_true')
+    parser.add_argument('--exp_name',type=str,default="")
     ARGS = parser.parse_args()
+    utils.set_experiment_dir(ARGS.exp_name)
+
+    global LOAD_START_TIME; LOAD_START_TIME = time()
+
     enc,dec,lin = utils.get_enc_dec('cuda',latent_size=NZ)
     mnist_ds = utils.get_mnist_dset(x_only=True)
     mnist_train = utils.get_mnist_dset(x_only=False)
@@ -229,7 +166,6 @@ if __name__ == "__main__":
     nines = mnist_train.x[(mnist_train.y == 9)].to('cuda')
     simple_ds = utils.TransformDataset(torch.cat([ones,twos,fives,eights],dim=0), [utils.to_float_tensor,utils.add_colour_dimension],x_only=True,device='cuda')
     mnist = utils.get_mnist_dset()
-    #simple_clearner = ConceptLearner(enc,dec,lin,simple_ds,opt=torch.optim.Adam,loss_func=nn.L1Loss(reduction='none'))
     simple_clearner = ConceptLearner(enc,dec,lin,mnist,opt=torch.optim.Adam,loss_func=nn.L1Loss(reduction='none'))
     simple_clearner.train_ae(epochs=20,bs=64)
     simple_clearner.check_ae_images()

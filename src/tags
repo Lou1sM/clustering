@@ -1,0 +1,144 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_OUTPUT_MODE	u-ctags	/u-ctags or e-ctags/
+!_TAG_PROGRAM_AUTHOR	Universal Ctags Team	//
+!_TAG_PROGRAM_NAME	Universal Ctags	/Derived from Exuberant Ctags/
+!_TAG_PROGRAM_URL	https://ctags.io/	/official site/
+!_TAG_PROGRAM_VERSION	0.0.0	/3fdf28bc/
+ARGS	./ae_experiments.py	/^    ARGS = parser.parse_args()$/;"	v
+ARGS	./min_ex.py	/^    ARGS = parser.parse_args()$/;"	v
+ConceptLearner	./ae_experiments.py	/^class ConceptLearner():$/;"	c
+ConceptLearner	./min_ex.py	/^class ConceptLearner():$/;"	c
+Concepts	./min_ex.py	/^class Concepts():$/;"	c
+Dataholder	./utils.py	/^class Dataholder():$/;"	c
+F	./ae_experiments.py	/^import torch.nn.functional as F$/;"	I
+F	./min_ex.py	/^import torch.nn.functional as F$/;"	I
+Generator	./utils.py	/^class Generator(nn.Module):$/;"	c
+LOAD_START_TIME	./ae_experiments.py	/^    global LOAD_START_TIME; LOAD_START_TIME = time()$/;"	v
+NZ	./ae_experiments.py	/^NZ=50$/;"	v
+NZ	./min_ex.py	/^NZ=50$/;"	v
+NonsenseDiscriminator	./utils.py	/^class NonsenseDiscriminator(nn.Module):$/;"	c
+TransformDataset	./utils.py	/^class TransformDataset(data.Dataset):$/;"	c
+__getitem__	./utils.py	/^    def __getitem__(self,idx): $/;"	m	class:TransformDataset
+__init__	./ae_experiments.py	/^    def __init__(self,enc,dec,lin,dataset,opt,loss_func,discrim=None): $/;"	m	class:ConceptLearner
+__init__	./min_ex.py	/^    def __init__(self,dim,opt,thresh,num_starting_concepts=10): $/;"	m	class:Concepts
+__init__	./min_ex.py	/^    def __init__(self,enc,dec,lin,dataset,opt,loss_func,discrim=None): $/;"	m	class:ConceptLearner
+__init__	./utils.py	/^    def __init__(self):$/;"	m	class:NonsenseDiscriminator
+__init__	./utils.py	/^    def __init__(self, nz,ngf,nc,dropout_p=0.):$/;"	m	class:Generator
+__init__	./utils.py	/^    def __init__(self,data,transforms,x_only,device): $/;"	m	class:TransformDataset
+__init__	./utils.py	/^    def __init__(self,train_data,train_labels): self.train_data,self.train_labels=train_data,tra/;"	m	class:Dataholder
+__len__	./min_ex.py	/^    def __len__(self): return len(self.exemplars)$/;"	m	class:Concepts
+__len__	./utils.py	/^    def __len__(self): return len(self.data) if self.x_only else len(self.x)$/;"	m	class:TransformDataset
+_comp	./utils.py	/^    def _comp(x):$/;"	f	function:compose	file:
+add_colour_dimension	./utils.py	/^def add_colour_dimension(item): return item.unsqueeze(0) if item.dim() == 2 else item.unsqueeze(/;"	f
+add_exemplar	./min_ex.py	/^    def add_exemplar(self,tensor):$/;"	m	class:Concepts
+check_ae_images	./ae_experiments.py	/^    def check_ae_images(self,num_rows=5):$/;"	m	class:ConceptLearner
+check_ae_images	./utils.py	/^def check_ae_images(enc,dec,dataset):$/;"	f
+check_latents	./ae_experiments.py	/^    def check_latents(self,latents,show=False):$/;"	m	class:ConceptLearner
+check_ohe_latents	./utils.py	/^def check_ohe_latents(dec,t):$/;"	f
+cluster	./umap_reproduce.py	/^import sklearn.cluster as cluster$/;"	I
+clusterable_embedding	./umap_reproduce.py	/^clusterable_embedding = umap.UMAP(n_neighbors=30, min_dist=0.0, n_components=2, random_state=42)/;"	v
+cm	./utils.py	/^import matplotlib.cm as cm$/;"	I
+compose	./utils.py	/^def compose(funcs):$/;"	f
+dec	./ae_experiments.py	/^    enc,dec,lin = utils.get_enc_dec('cuda',latent_size=NZ)$/;"	v
+dec	./min_ex.py	/^    enc,dec,lin = utils.get_enc_dec('cuda',latent_size=NZ)$/;"	v
+duplicate_dim	./utils.py	/^def duplicate_dim(enc,dec,lin,idx):$/;"	f
+eights	./ae_experiments.py	/^    eights = mnist_train.x[(mnist_train.y == 8)].to('cuda')$/;"	v
+eights	./min_ex.py	/^    eights = mnist_train.x[(mnist_train.y == 8)].to('cuda')$/;"	v
+enc	./ae_experiments.py	/^    enc,dec,lin = utils.get_enc_dec('cuda',latent_size=NZ)$/;"	v
+enc	./min_ex.py	/^    enc,dec,lin = utils.get_enc_dec('cuda',latent_size=NZ)$/;"	v
+exemplars_as_tensor	./min_ex.py	/^    def exemplars_as_tensor(self): return torch.stack([e.tensor for e in self.exemplars])$/;"	m	class:Concepts
+fives	./ae_experiments.py	/^    fives = mnist_train.x[(mnist_train.y == 5)].to('cuda')$/;"	v
+fives	./min_ex.py	/^    fives = mnist_train.x[(mnist_train.y == 5)].to('cuda')$/;"	v
+forward	./utils.py	/^    def forward(self, input):$/;"	m	class:Generator
+forward	./utils.py	/^    def forward(self,inp_):$/;"	m	class:NonsenseDiscriminator
+fours	./ae_experiments.py	/^    fours = mnist_train.x[(mnist_train.y == 4)].to('cuda')$/;"	v
+fours	./min_ex.py	/^    fours = mnist_train.x[(mnist_train.y == 4)].to('cuda')$/;"	v
+get_datetime_stamp	./utils.py	/^def get_datetime_stamp(): return str(datetime.now()).split()[0][5:] + '_'+str(datetime.now().tim/;"	f
+get_dloader	./utils.py	/^def get_dloader(raw_data,x_only,batch_size,device,random=True):$/;"	f
+get_dset	./utils.py	/^def get_dset(raw_data,x_only,device,tfms=None):$/;"	f
+get_enc_dec	./utils.py	/^def get_enc_dec(device, latent_size):$/;"	f
+get_far_tensor	./utils.py	/^def get_far_tensor(exemplars_tensor):$/;"	f
+get_mnist_dloader	./utils.py	/^def get_mnist_dloader(x_only=False,device='cuda',bs=64):$/;"	f
+get_mnist_dset	./utils.py	/^def get_mnist_dset(device='cuda',x_only=False):$/;"	f
+get_reslike_block	./utils.py	/^def get_reslike_block(nfs,sz):$/;"	f
+get_user_yesno_answer	./utils.py	/^def get_user_yesno_answer(question):$/;"	f
+hdbscan_labels	./umap_reproduce.py	/^hdbscan_labels = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500).fit_predict(lowd_mnist)$/;"	v
+hdbscan_labels	./umap_reproduce.py	/^hdbscan_labels = hdbscan.HDBSCAN(min_samples=10,min_cluster_size=500,).fit_predict(clusterable_e/;"	v
+interpret_wo_grad	./min_ex.py	/^    def interpret_wo_grad(self,inp_,eps):$/;"	m	class:Concepts
+kmeans_labels	./umap_reproduce.py	/^kmeans_labels = cluster.KMeans(n_clusters=10).fit_predict(mnist_data)$/;"	v
+lin	./ae_experiments.py	/^    enc,dec,lin = utils.get_enc_dec('cuda',latent_size=NZ)$/;"	v
+lin	./min_ex.py	/^    enc,dec,lin = utils.get_enc_dec('cuda',latent_size=NZ)$/;"	v
+lowd_mnist	./umap_reproduce.py	/^lowd_mnist = PCA(n_components=50).fit_transform(mnist_data)$/;"	v
+mnist	./ae_experiments.py	/^    mnist = utils.get_mnist_dset()$/;"	v
+mnist	./min_ex.py	/^    mnist = utils.get_mnist_dset()$/;"	v
+mnist_data	./umap_reproduce.py	/^mnist_data, mnist_labels = fetch_openml('mnist_784', version=1, return_X_y=True)$/;"	v
+mnist_ds	./ae_experiments.py	/^    mnist_ds = utils.get_mnist_dset(x_only=True)$/;"	v
+mnist_ds	./min_ex.py	/^    mnist_ds = utils.get_mnist_dset(x_only=True)$/;"	v
+mnist_labels	./umap_reproduce.py	/^mnist_data, mnist_labels = fetch_openml('mnist_784', version=1, return_X_y=True)$/;"	v
+mnist_labels	./umap_reproduce.py	/^mnist_labels = mnist_labels.astype(np.float)$/;"	v
+mnist_train	./ae_experiments.py	/^    mnist_train = utils.get_mnist_dset(x_only=False)$/;"	v
+mnist_train	./min_ex.py	/^    mnist_train = utils.get_mnist_dset(x_only=False)$/;"	v
+nines	./ae_experiments.py	/^    nines = mnist_train.x[(mnist_train.y == 9)].to('cuda')$/;"	v
+nines	./min_ex.py	/^    nines = mnist_train.x[(mnist_train.y == 9)].to('cuda')$/;"	v
+nn	./ae_experiments.py	/^import torch.nn as nn$/;"	I
+nn	./min_ex.py	/^import torch.nn as nn$/;"	I
+nn	./utils.py	/^import torch.nn as nn$/;"	I
+normalize	./utils.py	/^def normalize(t): return t\/t.norm()$/;"	f
+normalize_leaf	./utils.py	/^def normalize_leaf(t): return torch.tensor(t.data)\/t.data.norm()$/;"	f
+np	./ae_experiments.py	/^import numpy as np$/;"	I
+np	./min_ex.py	/^import numpy as np$/;"	I
+np	./umap_reproduce.py	/^import numpy as np$/;"	I
+np	./utils.py	/^import numpy as np$/;"	I
+numpyify	./utils.py	/^def numpyify(x):$/;"	f
+oheify	./utils.py	/^def oheify(x):$/;"	f
+ones	./ae_experiments.py	/^    ones = mnist_train.x[(mnist_train.y == 1)].to('cuda')$/;"	v
+ones	./min_ex.py	/^    ones = mnist_train.x[(mnist_train.y == 1)].to('cuda')$/;"	v
+parser	./ae_experiments.py	/^    parser = argparse.ArgumentParser()$/;"	v
+parser	./min_ex.py	/^    parser = argparse.ArgumentParser()$/;"	v
+plt	./ae_experiments.py	/^import matplotlib.pyplot as plt$/;"	I
+plt	./min_ex.py	/^import matplotlib.pyplot as plt$/;"	I
+plt	./umap_reproduce.py	/^import matplotlib.pyplot as plt$/;"	I
+plt	./utils.py	/^import matplotlib.pyplot as plt$/;"	I
+predict	./utils.py	/^    def predict(self,inp_):$/;"	m	class:NonsenseDiscriminator
+print_tensors	./utils.py	/^def print_tensors(*tensors):$/;"	f
+prune	./utils.py	/^def prune(enc,dec,lin,idx):$/;"	f
+reload	./min_ex.py	/^def reload():$/;"	f
+reload	./utils.py	/^def reload():$/;"	f
+safemean	./utils.py	/^def safemean(t): return 0 if t.numel() == 0 else t.mean()$/;"	f
+save_and_check	./utils.py	/^def save_and_check(enc,dec,fname):$/;"	f
+scatter_clusters	./utils.py	/^def scatter_clusters(embeddings,labels):$/;"	f
+set_experiment_dir	./utils.py	/^def set_experiment_dir(exp_name):$/;"	f
+sevens	./ae_experiments.py	/^    sevens = mnist_train.x[(mnist_train.y == 7)].to('cuda')$/;"	v
+sevens	./min_ex.py	/^    sevens = mnist_train.x[(mnist_train.y == 7)].to('cuda')$/;"	v
+show_xb	./utils.py	/^def show_xb(xb): plt.imshow(xb[0,0]); plt.show()$/;"	f
+simple_clearner	./ae_experiments.py	/^    simple_clearner = ConceptLearner(enc,dec,lin,mnist,opt=torch.optim.Adam,loss_func=nn.L1Loss(/;"	v
+simple_clearner	./min_ex.py	/^    simple_clearner = ConceptLearner(enc,dec,lin,mnist,opt=torch.optim.Adam,loss_func=nn.L1Loss(/;"	v
+simple_ds	./ae_experiments.py	/^    simple_ds = utils.TransformDataset(torch.cat([ones,twos,fives,eights],dim=0), [utils.to_floa/;"	v
+simple_ds	./min_ex.py	/^    simple_ds = utils.TransformDataset(torch.cat([ones,twos,fives,eights],dim=0), [utils.to_floa/;"	v
+sixes	./ae_experiments.py	/^    sixes = mnist_train.x[(mnist_train.y == 6)].to('cuda')$/;"	v
+sixes	./min_ex.py	/^    sixes = mnist_train.x[(mnist_train.y == 6)].to('cuda')$/;"	v
+sns	./ae_experiments.py	/^import seaborn as sns$/;"	I
+sns	./min_ex.py	/^import seaborn as sns$/;"	I
+sns	./umap_reproduce.py	/^import seaborn as sns$/;"	I
+sns	./utils.py	/^import seaborn as sns$/;"	I
+standard_embedding	./umap_reproduce.py	/^standard_embedding = umap.UMAP(random_state=42).fit_transform(mnist_data)$/;"	v
+stats	./utils.py	/^def stats(x): return x.mean(),x.std()$/;"	f
+tdatasets	./ae_experiments.py	/^import torchvision.datasets as tdatasets$/;"	I
+tdatasets	./min_ex.py	/^import torchvision.datasets as tdatasets$/;"	I
+tdatasets	./utils.py	/^import torchvision.datasets as tdatasets$/;"	I
+test_mods_eq	./utils.py	/^def test_mods_eq(m1,m2):$/;"	f
+threes	./ae_experiments.py	/^    threes = mnist_train.x[(mnist_train.y == 3)].to('cuda')$/;"	v
+threes	./min_ex.py	/^    threes = mnist_train.x[(mnist_train.y == 3)].to('cuda')$/;"	v
+to_float_tensor	./utils.py	/^def to_float_tensor(item): return item.float().div_(255.)$/;"	f
+train_ae	./ae_experiments.py	/^    def train_ae(self,epochs,bs):$/;"	m	class:ConceptLearner
+train_ae	./min_ex.py	/^    def train_ae(self,epochs,bs):$/;"	m	class:ConceptLearner
+train_labels	./ae_experiments.py	/^    def train_labels(self,epochs,bs):$/;"	m	class:ConceptLearner
+train_labels	./min_ex.py	/^    def train_labels(self,epochs,bs):$/;"	m	class:ConceptLearner
+twos	./ae_experiments.py	/^    twos = mnist_train.x[(mnist_train.y == 2)].to('cuda')$/;"	v
+twos	./min_ex.py	/^    twos = mnist_train.x[(mnist_train.y == 2)].to('cuda')$/;"	v
+umap	./ae_experiments.py	/^import umap.umap_ as umap$/;"	I
+umap	./min_ex.py	/^import umap.umap_ as umap$/;"	I
+umap	./utils.py	/^import umap.umap_ as umap$/;"	I
+umap_embed	./utils.py	/^def umap_embed(vectors,**config): return umap.UMAP(random_state=42).fit_transform(vectors,**conf/;"	f
+vis_latent	./utils.py	/^def vis_latent(dec,latent): plt.imshow(dec(latent[None,:,None,None].cuda())[0,0]); plt.show()$/;"	f

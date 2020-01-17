@@ -1,5 +1,8 @@
+import os
 from pdb import set_trace
+from datetime import datetime
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import torch.nn as nn
 import torch
 import matplotlib.pyplot as plt
@@ -99,6 +102,23 @@ def add_colour_dimension(item): return item.unsqueeze(0) if item.dim() == 2 else
 def umap_embed(vectors,**config): return umap.UMAP(random_state=42).fit_transform(vectors,**config)
 def stats(x): return x.mean(),x.std()
 def safemean(t): return 0 if t.numel() == 0 else t.mean()
+def get_datetime_stamp(): return str(datetime.now()).split()[0][5:] + '_'+str(datetime.now().time()).split()[0][:-7]
+
+def get_user_yesno_answer(question):
+   answer = input(question+'(y/n)')
+   if answer == 'y': return True
+   elif answer == 'n': return False
+   else:
+       print("Please answer 'y' or 'n'")
+       return(get_user_yesno_answer(question))
+
+def set_experiment_dir(exp_name):
+    exp_name = get_datetime_stamp() if exp_name == "" else exp_name
+    if not os.path.isdir('../experiments/{}'.format(exp_name)): os.mkdir('../experiments/{}'.format(exp_name    ))
+    elif exp_name == 'try' or overwrite: pass
+    elif not get_user_yesno_answer('An experiment with name {} has already been run, do you want to overwrite?'.format(exp_name)):
+        print('Please rerun command with a different experiment name')
+        sys.exit()
 
 def oheify(x):
     target_category = torch.argmax(x, dim=1)
@@ -122,9 +142,10 @@ def numpyify(x):
 
 def scatter_clusters(embeddings,labels):
     palette = ['r','k','y','g','b','m','purple','brown','c','orange']
+    palette = cm.rainbow(np.linspace(0,1,len(set(labels))))
     labels =  numpyify([0]*len(embeddings)) if labels is None else numpyify(labels)
     for i,label in enumerate(list(set(labels))):
-        plt.scatter(embeddings[labels==label,0], embeddings[labels==label,1], s=0.2, c=palette[i], label=i)
+        plt.scatter(embeddings[labels==label,0], embeddings[labels==label,1], s=0.2, c=[palette[i]], label=i)
     plt.legend()
     plt.show()
     return plt
