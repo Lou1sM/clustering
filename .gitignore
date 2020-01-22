@@ -3,3 +3,6 @@ runs/**
 __pycache__/**
 *.swp*
 data/**
+**/__pycache__/**
+**/runs/**
+experiments/**
