@@ -47,7 +47,7 @@ class ConceptLearner():
             epoch_loss = 0
             for i, (xb,yb,idx) in enumerate(dl): 
                 latent = self.enc(xb)
-                latent = utils.noiseify(latent,ARGS.pretrain_noise*(epoch/ARGS.pretrain_epochs))
+                latent = utils.noiseify(latent,ARGS.noise*(epoch/ARGS.pretrain_epochs))
                 loss = self.ploss_func(self.dec(latent),xb)
                 loss.backward(); self.opt.step(); self.opt.zero_grad()
                 epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
@@ -70,8 +70,7 @@ class ConceptLearner():
                 p.savefig(f'../experiments/{ARGS.exp_name}/scatter_plot-current.{utils.get_datetime_stamp()}.png')
                 self.labels = np.copy(self.full_labels)
                 #self.labels[scanner.probabilities_<0.1]=-1
-                set_trace()
-            self.centroids = nn.Parameter(torch.stack([total_latents[self.full_labels==i,:,0,0].mean(axis=0) for i in range(max(self.full_labels)+1)]).cuda())
+            self.centroids = nn.Parameter(torch.stack([total_latents[self.labels==i,:,0,0].mean(axis=0) for i in range(max(self.labels)+1)]).cuda())
             if ARGS.centroids_lr > 0: self.opt.add_param_group({'params':self.centroids, 'lr':ARGS.centroids_lr})
             else: self.centroids.requires_grad=False
             self.check_latents(self.centroids)
@@ -80,7 +79,6 @@ class ConceptLearner():
             self.labeled_ds = utils.TransformDataset(d,[utils.to_float_tensor,utils.add_colour_dimension],x_only=False,device='cuda')
             self.closs_func=nn.MSELoss(reduction='none')
             print(f'Num clusters: {self.num_classes}\t Num classified: {sum(self.labels>=0)}')
-            print(adjusted_rand_score(self.full_labels,self.true_labels),adjusted_mutual_info_score(self.full_labels,self.true_labels))
             print(adjusted_rand_score(self.labels,self.true_labels),adjusted_mutual_info_score(self.labels,self.true_labels))
             self.train_labels(1 if ARGS.test else 6,ARGS.batch_size)
             if ARGS.test: break
@@ -92,6 +90,8 @@ class ConceptLearner():
                     
     def train_labels(self,epochs,bs):
         dl = data.DataLoader(self.labeled_ds,batch_sampler=data.BatchSampler(data.RandomSampler(self.labeled_ds),bs,drop_last=False),pin_memory=False)        
+        ce_loss_func = nn.CrossEntropyLoss()
+        rlosses, closses, crlosses = [],[],[]
         for epoch in range(epochs):
             total_rloss = torch.tensor(0.,device='cuda')
             total_closs = torch.tensor(0.,device='cuda')
@@ -104,28 +104,34 @@ class ConceptLearner():
                 yb_ = yb*hmask
                 centroid_targets = self.centroids[yb_]
                 crpred = self.dec(centroid_targets[:,:,None,None])
-                rpred = self.dec(utils.noiseify(latent,1))
+                rpred = self.dec(utils.noiseify(latent,ARGS.noise))
                 rloss_ = self.loss_func(rpred,xb).mean(dim=[1,2,3])
                 closs_ = self.closs_func(latent,centroid_targets[:,:,None,None]).mean(dim=1)
                 crloss_ = self.loss_func(crpred,xb).mean(dim=[1,2,3])
                 #rrloss_ = self.closs_func(rrpred,centroid_targets[:,:,None,None]).mean(dim=1)
+                set_trace()
                 crmask = crloss_ < 0.1
                 mask = hmask*crmask
                 num_easys += sum(mask)
-                inverse_dists = self.closs_func(latent[:,None,:,0,0],self.centroids).mean(dim=-1)**-1
-                inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
-                lf(inverse_dists,yb_)
+                #inverse_dists = self.closs_func(latent[:,None,:,0,0],self.centroids).mean(dim=-1)**-1
+                #inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
+                #gauss_loss = ce_loss_func(inverse_dists,yb_)
+                #if i%5 == 0: print(gauss_loss.item())
                 #closs = 0.1*(crloss_[mask]).mean() + rrloss_[mask].mean() + torch.clamp(closs_,min=ARGS.clamp_closs)[mask].mean() if mask.any() else torch.tensor(0.,device='cuda')
                 closs = (crloss_[mask]).mean() + torch.clamp(closs_,min=ARGS.clamp_closs)[mask].mean() if mask.any() else torch.tensor(0.,device='cuda')
+                #closs = (crloss_[mask]).mean() + gauss_loss if mask.any() else torch.tensor(0.,device='cuda')
                 rloss = torch.tensor(0.,device='cuda') if mask.all() else (rloss_[~mask]).mean() 
                 total_rloss = total_rloss*((i+1)/(i+2)) + rloss_.mean()*(1/(i+2))
                 total_closs = total_closs*((i+1)/(i+2)) + closs_.mean()*(1/(i+2))
                 total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean()*(1/(i+2))
                 #total_rrloss = total_rrloss*((i+1)/(i+2)) + rrloss_.mean()*(1/(i+2))
                 loss = rloss + ARGS.clmbda*closs
+                rlosses.append(rloss); closses.append(closs_.mean()); crlosses.append(crloss_.mean())
                 if random.random()<ARGS.mirror_prob: loss += self.closs_func(self.enc(self.dec(self.centroids[:,:,None,None]))[:,:,0,0],self.centroids).mean()
                 loss.backward(); self.opt.step(); self.opt.zero_grad()
             print(f'R Loss {total_rloss.item()}, C Loss: {total_closs.item()}, CR Loss: {total_crloss.item()}, num easys: {num_easys}')
+        plt.clf(); plt.plot(rlosses,closses,crlosses)
+        plt.show()
     
     def check_latents(self,latents,show=False):
         _, axes = plt.subplots(6,2,figsize=(7,7))
@@ -137,6 +143,7 @@ class ConceptLearner():
         if show: plt.show()
         plt.savefig(f'../experiments/{ARGS.exp_name}/current.png')
         plt.savefig(f'../experiments/{ARGS.exp_name}/{utils.get_datetime_stamp()}.png')
+        plt.clf()
 
     def check_ae_images(self,num_rows=5):
         idxs = np.random.randint(0,len(self.dataset),size=num_rows*4)
@@ -169,10 +176,8 @@ if __name__ == "__main__":
     parser.add_argument('--clmbda',type=float,default=1.)
     parser.add_argument('--mirror_lmbda',type=float,default=1.)
     parser.add_argument('--mirror_prob',type=float,default=0.1)
-    parser.add_argument('--reverse_lmbda',type=float,default=0.1)
-    parser.add_argument('--pretrain_noise',type=float,default=0.)
+    parser.add_argument('--noise',type=float,default=1.5)
     parser.add_argument('--anneal_dec',action='store_true')
-    parser.add_argument('--gan_dec_centroids',action='store_true')
     parser.add_argument('--clamp_closs',type=float,default=0.)
     parser.add_argument('--exp_name',type=str,default="try")
     ARGS = parser.parse_args()

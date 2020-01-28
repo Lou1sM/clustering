@@ -54,10 +54,6 @@ class ConceptLearner():
                     loss = self.ploss_func(self.dec(latent),xb)
                     loss.backward(); self.opt.step(); self.opt.zero_grad()
                     epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
-                    if ARGS.test: break
-                if ARGS.test: break
-                print(f'Epoch: {epoch}\tLoss: {epoch_loss.item()}')
-            torch.save({'encoder':self.enc,'decoder':self.dec},'pretrained.pt')
         for epoch in range(ARGS.epochs):
             print(f'Epoch: {epoch}')
             determin_dl = data.DataLoader(self.dataset,batch_sampler=data.BatchSampler(data.SequentialSampler(self.dataset),461,drop_last=False),pin_memory=False)        
@@ -65,48 +61,31 @@ class ConceptLearner():
                 latent = self.enc(xb)
                 total_latents = latent.detach().cpu() if i==0 else torch.cat([total_latents,latent.detach().cpu()],dim=0)
             if ARGS.test: self.labels = np.zeros(len(total_latents),dtype=np.int32)
-            elif epoch==0 and ARGS.pretrained: self.labels, self.full_labels = np.load('saved_labels.npy'), np.load('saved_full_labels.npy')
+            elif epoch==0 and ARGS.pretrained: self.labels = np.load('saved_labels.npy')
             else:
                 self.umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(total_latents.squeeze())
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-                self.full_labels = scanner.fit_predict(self.umapped_latents)
-                self.labels = np.copy(self.full_labels)
-                self.labels[scanner.probabilities_<1.0]=-1
+                self.labels = scanner.fit_predict(self.umapped_latents)
                 if epoch==0: np.save('saved_labels.npy',self.labels)
-                if epoch==0: np.save('saved_full_labels.npy',self.full_labels)
             self.centroids = torch.stack([total_latents[self.labels==i,:,0,0].mean(axis=0) for i in range(max(self.labels)+1)]).cuda()
-            self.check_latents(self.centroids)
             self.num_classes = max(self.labels+1)
             d = utils.Dataholder(self.dataset.x,torch.tensor(self.labels,device='cuda').long())
             self.labeled_ds = utils.TransformDataset(d,[utils.to_float_tensor,utils.add_colour_dimension],x_only=False,device='cuda')
             self.closs_func=nn.MSELoss(reduction='none')
-            print(f'Num clusters: {self.num_classes}\t Num classified: {sum(self.full_labels>=0)}')
-            print(adjusted_rand_score(self.full_labels,self.true_labels),adjusted_mutual_info_score(self.full_labels,self.true_labels))
-            #ax = sns.heatmap(get_confusion_mat(self.true_labels,self.labels)); plt.show(); plt.clf()
-            self.train_labels(1 if ARGS.test else 1+epoch,ARGS.batch_size)
-            if ARGS.test: break
-            for epoch in range(10):
-                epoch_loss = 0
-                for i, (xb,yb,idx) in enumerate(dl): 
-                    latent = self.enc(xb)
-                    latent = utils.noiseify(latent,ARGS.noise)
-                    loss = self.ploss_func(self.dec(latent),xb)
-                    loss.backward(); self.opt.step(); self.opt.zero_grad()
-                    epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
-                print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
-                if epoch_loss < 0.02: break
+            self.train_labels(1,bs=ARGS.batch_size)
         
     def train_labels(self,epochs,bs):
         dl = data.DataLoader(self.labeled_ds,batch_sampler=data.BatchSampler(data.RandomSampler(self.labeled_ds),bs,drop_last=False),pin_memory=False)        
-        ce_loss_func = nn.CrossEntropyLoss(reduction='none')
+        ce_loss_func = nn.CrossEntropyLoss()
         for epoch in range(epochs):
             num_easys = 0
-            total_rloss = 0.
-            total_closs = 0.
-            total_gauss_loss = 0.
-            total_crloss = 0.
-            total_rrloss = 0.
-            rloss_list = []
+            total_rloss = torch.tensor(0.,device='cuda')
+            #total_rloss = 0.
+            total_closs = torch.tensor(0.,device='cuda')
+            #total_closs = 0.
+            total_crloss = torch.tensor(0.,device='cuda')
+            #total_crloss = 0.
+            total_rrloss = torch.tensor(0.,device='cuda')
             for i, (xb,yb,idx) in enumerate(dl):
                 latent = self.enc(xb)
                 hmask = yb>=0
@@ -117,26 +96,23 @@ class ConceptLearner():
                 rloss_ = self.loss_func(rpred,xb).mean(dim=[1,2,3])
                 closs_ = self.closs_func(latent,centroid_targets[:,:,None,None]).mean(dim=1)
                 crloss_ = self.loss_func(crpred,xb).mean(dim=[1,2,3])
-                inverse_dists = self.closs_func(latent[:,None,:,0,0],self.centroids).mean(dim=-1)**-1
-                inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
-                gauss_loss = ce_loss_func(inverse_dists,yb_)
-                #crmask = crloss_ < ARGS.crthresh
-                #mask = hmask*crmask
-                mask = hmask
-                num_easys += sum(mask)
-                #closs = 0.1*(crloss_[mask]).mean() + closs_[mask].mean() if mask.any() else torch.tensor(0.,device='cuda')
-                #closs = 0.1*(crloss_[mask]).mean() + torch.clamp(closs_,min=ARGS.clamp_closs)[mask].mean() if mask.any() else torch.tensor(0.,device='cuda')
-                #closs = (crloss_[mask]).mean() + gauss_loss[mask].mean()  if mask.any() else torch.tensor(0.,device='cuda')
-                closs = 0.1*(crloss_[mask]).mean() + torch.clamp(gauss_loss, min=ARGS.clamp_gauss_loss)[mask].mean()  if mask.any() else torch.tensor(0.,device='cuda')
+                crmask = crloss_ < 0.1
+                mask = hmask*crmask
+                closs = 0.1*(crloss_[mask]).mean() + closs_[mask].mean() if mask.any() else torch.tensor(0.,device='cuda')
+                #total_rloss = total_rloss*((i+1)/(i+2)) + rloss_.mean().item()*(1/(i+2))
+                total_rloss = total_rloss*((i+1)/(i+2)) + rloss_.mean()*(1/(i+2))
+                #total_closs = total_closs*((i+1)/(i+2)) + closs_.mean().item()*(1/(i+2))
+                total_closs = total_closs*((i+1)/(i+2)) + closs_.mean()*(1/(i+2))
+                #total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
+                total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean()*(1/(i+2))
                 rloss = torch.tensor(0.,device='cuda') if mask.all() else (rloss_[~mask]).mean() 
-                total_rloss = total_rloss*((i+1)/(i+2)) + rloss_.mean().item()*(1/(i+2))
-                total_closs = total_closs*((i+1)/(i+2)) + closs_.mean().item()*(1/(i+2))
-                total_gauss_loss = total_gauss_loss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
-                total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
-                loss = rloss + ARGS.clmbda*closs
-                #loss = gauss_loss.mean()
+                total_closs = total_closs*((i+1)/(i+2)) + closs_.mean()*(1/(i+2))
+                total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean()*(1/(i+2))
+                #loss = rloss + ARGS.clmbda*closs
+                loss = rloss + closs
+                #loss = closs_.mean()
                 loss.backward(); self.opt.step(); self.opt.zero_grad()
-            print(f'R Loss {total_rloss}, C Loss: {total_closs}, CR Loss: {total_crloss}, Gauss Loss {total_gauss_loss} num easys: {num_easys}')
+            print(f'R Loss {total_rloss}, C Loss: {total_closs}, CR Loss: {total_crloss}, num easys: {num_easys}')
     
     def check_latents(self,latents,show=False):
         _, axes = plt.subplots(6,2,figsize=(7,7))
@@ -147,6 +123,20 @@ class ConceptLearner():
             except: set_trace()
         if show: plt.show()
         plt.clf()
+
+    def check_ae_images(self,num_rows=5):
+        idxs = np.random.randint(0,len(self.dataset),size=num_rows*4)
+        inimgs = self.dataset[idxs][0]
+        x = self.enc(inimgs)
+        outimgs = self.dec(x)
+        _, axes = plt.subplots(num_rows,4,figsize=(7,7))
+        for i in range(num_rows):
+            axes[i,0].imshow(inimgs[i,0])
+            axes[i,1].imshow(outimgs[i,0])
+            axes[i,2].imshow(inimgs[i+num_rows,0])
+            axes[i,3].imshow(outimgs[i+num_rows,0])
+        plt.show()
+
 
 def label_assignment_cost(labels1,labels2,label1,label2):
     return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
@@ -183,8 +173,6 @@ if __name__ == "__main__":
     parser.add_argument('--dec_lr',type=float,default=1e-3)
     parser.add_argument('--clmbda',type=float,default=1.)
     parser.add_argument('--noise',type=float,default=1.5)
-    parser.add_argument('--crthresh',type=float,default=0.1)
-    parser.add_argument('--clamp_gauss_loss',type=float,default=0.1)
     ARGS = parser.parse_args()
     print(ARGS)
 

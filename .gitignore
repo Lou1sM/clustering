@@ -6,3 +6,4 @@ data/**
 **/__pycache__/**
 **/runs/**
 experiments/**
+checkpoints/**

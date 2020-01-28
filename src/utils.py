@@ -71,8 +71,51 @@ class Generator(nn.Module):
             # state size. (nc) x 64 x 64
         )
 
-    def forward(self, input):
-        return self.main(input)
+    def forward(self, inp):
+        return self.main(inp)
+
+class GeneratorStacked(nn.Module):
+    def __init__(self, nz,ngf,nc,dropout_p=0.):
+        super(GeneratorStacked, self).__init__()
+        self.dropout = torch.nn.Dropout(p=dropout_p)
+        self.block1 = nn.Sequential(
+            # input is Z, going into a convolution
+            nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 1, bias=False),
+            nn.BatchNorm2d(ngf * 8),
+            nn.ReLU(True),
+            self.dropout)
+            # state size. (ngf*8) x 4 x 4
+        self.block2 = nn.Sequential(
+            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 4),
+            nn.ReLU(True),
+            self.dropout)
+            # state size. (ngf*4) x 8 x 8
+        self.block3 = nn.Sequential(
+            nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 2),
+            nn.ReLU(True),
+            self.dropout)
+            # state size. (ngf*2) x 16 x 16
+        self.block4 = nn.Sequential(
+            nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 2, bias=False),
+            nn.BatchNorm2d(ngf),
+            nn.ReLU(True),
+            self.dropout)
+            # state size. (ngf) x 32 x 32
+        self.block5 = nn.Sequential(
+            nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
+            nn.Tanh()
+            # state size. (nc) x 64 x 64
+        )
+
+    def forward(self,inp):
+        out1 = self.block1(inp)
+        out2 = self.block2(out1)
+        out3 = self.block3(out2)
+        out4 = self.block4(out3)
+        out5 = self.block5(out4)
+        return out3, out5
 
 class Dataholder():
     def __init__(self,train_data,train_labels): self.train_data,self.train_labels=train_data,train_labels
@@ -163,6 +206,11 @@ def get_reslike_block(nfs,sz):
     return nn.Sequential(
         *[layers.conv_layer(nfs[i],nfs[i+1],stride=2 if i==0 else 1,leaky=0.3,padding=1)
          for i in range(len(nfs)-1)], nn.AdaptiveMaxPool2d(sz))
+
+def get_enc_blocks(device, latent_size):
+    block1 = get_reslike_block([1,4,8,16,32,64],sz=8)
+    block2 = get_reslike_block([64,128,256,latent_size],sz=1)
+    return block1.to(device), block2.to(device)
 
 def get_enc_dec(device, latent_size):
     block1 = get_reslike_block([1,4,8,16,32],sz=7)
@@ -281,4 +329,18 @@ def vis_latent(dec,latent): plt.imshow(dec(latent[None,:,None,None].cuda())[0,0]
 def check_ohe_latents(dec,t):
     for t in range(dec.main[0].weight.shape[0]):
         vis_latent(dec,(torch.arange(dec.main[0].weight.shape[0])==t).float().cuda())
+
+def check_ae_images(enc,dec,dataset,num_rows=5,stacked=False):
+    idxs = np.random.randint(0,len(dataset),size=num_rows*4)
+    inimgs = dataset[idxs][0]
+    x = enc(inimgs)[-1] if stacked else enc(inimgs)
+    outimgs = dec(x)[-1] if stacked else dec(outimgs)
+    _, axes = plt.subplots(num_rows,4,figsize=(7,7))
+    for i in range(num_rows):
+        axes[i,0].imshow(inimgs[i,0])
+        axes[i,1].imshow(outimgs[i,0])
+        axes[i,2].imshow(inimgs[i+num_rows,0])
+        axes[i,3].imshow(outimgs[i+num_rows,0])
+    plt.show()
+
 
