@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 from pdb import set_trace
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -20,7 +21,6 @@ from torch.utils import data
 def reload():
     import importlib, utils
     importlib.reload(utils)
-
 
 class NonsenseDiscriminator(nn.Module):
     def __init__(self):
@@ -117,8 +117,19 @@ class GeneratorStacked(nn.Module):
         out5 = self.block5(out4)
         return out3, out5
 
+class EncoderStacked(nn.Module):
+    def __init__(self,block1,block2): 
+        super(EncoderStacked, self).__init__()
+        self.block1,self.block2 = block1,block2
+
+    def forward(self,inp):
+        out1 = self.block1(inp)
+        out2 = self.block2(out1)
+        return out1, out2
+
 class Dataholder():
     def __init__(self,train_data,train_labels): self.train_data,self.train_labels=train_data,train_labels
+
 class TransformDataset(data.Dataset):
     def __init__(self,data,transforms,x_only,device): 
         self.transform,self.x_only,self.device=compose(transforms),x_only,device
@@ -129,6 +140,21 @@ class TransformDataset(data.Dataset):
             self.x.to(self.device); self.y.to(self.device) 
     def __len__(self): return len(self.data) if self.x_only else len(self.x)
     def __getitem__(self,idx): 
+        if self.x_only: return self.transform(self.data[idx]), idx
+        else: return self.transform(self.x[idx]), self.y[idx], idx
+
+class KwargTransformDataset(data.Dataset):
+    def __init__(self,transforms,device,**kwdata): 
+        self.transform,self.device=compose(transforms),device
+        self.data_names = []
+        self.num_datas = len(kwdata)
+        for data_name, data in kwdata.items():
+            setattr(self,data_name,data.to(device))
+            self.data_names.append(data_name)
+        assert len(self.data_names) == self.num_datas
+    def __len__(self): return len(getattr(self,self.data_names[0]))
+    def __getitem__(self,idx): 
+        return [self.transform(getattr(self,data_name)[idx]) for data_name in self.data_names] + [idx]
         if self.x_only: return self.transform(self.data[idx]), idx
         else: return self.transform(self.x[idx]), self.y[idx], idx
 
@@ -207,6 +233,36 @@ def get_reslike_block(nfs,sz):
         *[layers.conv_layer(nfs[i],nfs[i+1],stride=2 if i==0 else 1,leaky=0.3,padding=1)
          for i in range(len(nfs)-1)], nn.AdaptiveMaxPool2d(sz))
 
+class SuperAE(nn.Module):
+    def __init__(self,num_aes,latent_size,device):
+        super().__init__()
+        self.num_aes = num_aes
+        self.latent_size = latent_size
+        self.device = device
+        self.encs,self.decs = [],[]
+        for ae_num in range(num_aes):
+            enc,dec = get_enc_dec(self.device,self.latent_size)
+            setattr(self,f'enc{ae_num}',enc)
+            setattr(self,f'dec{ae_num}',dec)
+            self.encs.append(enc)
+            self.decs.append(dec)
+        
+    def forward(self,x):
+        latents = torch.stack([enc(x) for enc in self.encs]) 
+        return torch.stack([dec(latents[i]) for i,dec in enumerate(self.decs)])
+
+    def encode(self,x):
+        #return torch.stack([enc(x) for enc in self.encs])
+        return [enc(x) for enc in self.encs]
+
+    def decode_list(self,latent_list):
+        #return torch.stack([dec(latent_list[i]) for i,dec in enumerate(self.decs)])
+        return [dec(latent_list[i]) for i,dec in enumerate(self.decs)]
+
+    def decode_all(self,x):
+        return [dec(x) for dec in self.decs]
+
+
 def get_enc_blocks(device, latent_size):
     block1 = get_reslike_block([1,4,8,16,32,64],sz=8)
     block2 = get_reslike_block([64,128,256,latent_size],sz=1)
@@ -215,10 +271,9 @@ def get_enc_blocks(device, latent_size):
 def get_enc_dec(device, latent_size):
     block1 = get_reslike_block([1,4,8,16,32],sz=7)
     block2 = get_reslike_block([32,64,128,256,latent_size],sz=1)
-    lin = nn.Linear(latent_size,latent_size)
     enc = nn.Sequential(block1,block2)
     dec = Generator(nz=latent_size,ngf=32,nc=1,dropout_p=0.)
-    return enc.to(device),dec.to(device),lin.to(device)
+    return enc.to(device),dec.to(device)
 
 def get_far_tensor(exemplars_tensor):
     while True:
@@ -343,4 +398,7 @@ def check_ae_images(enc,dec,dataset,num_rows=5,stacked=False):
         axes[i,3].imshow(outimgs[i+num_rows,0])
     plt.show()
 
-
+def asMinutes(s):
+    m = math.floor(s / 60)
+    s -= m * 60
+    return '%dm %ds' % (m, s)

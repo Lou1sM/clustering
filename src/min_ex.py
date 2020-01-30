@@ -31,9 +31,10 @@ from scipy.optimize import linear_sum_assignment
 import random
 
 
+
 class ConceptLearner():
-    def __init__(self,enc,dec,lin,dataset,opt,loss_func,discrim=None): 
-        self.enc,self.dec,self.lin,self.dataset = enc,dec,lin,dataset
+    def __init__(self,enc,dec,dataset,opt,loss_func,discrim=None): 
+        self.enc,self.dec,self.dataset = enc,dec,dataset
         self.ploss_func,self.loss_func,self.ce_loss_func = nn.L1Loss(),loss_func,nn.CrossEntropyLoss()
         if ARGS.pretrained:
             saved_model = torch.load('pretrained.pt')
@@ -47,50 +48,101 @@ class ConceptLearner():
         if ARGS.pretrained: pass
         else:
             for epoch in range(ARGS.pretrain_epochs):
-                epoch_loss = 0
-                for i, (xb,yb,idx) in enumerate(dl): 
-                    latent = self.enc(xb)
-                    latent = utils.noiseify(latent,ARGS.noise*(epoch/ARGS.pretrain_epochs))
-                    loss = self.ploss_func(self.dec(latent),xb)
+                total_mid_loss = 0.
+                total_pred_loss = 0.
+                for i,(xb,yb,idx) in enumerate(dl):
+                    enc_mid, latent = enc(xb)
+                    dec_mid, pred = dec(utils.noiseify(latent,ARGS.noise))
+                    mid_loss = self.loss_func(enc_mid,dec_mid).mean()
+                    pred_loss = self.loss_func(pred,xb).mean()
+                    loss = mid_loss + pred_loss
                     loss.backward(); self.opt.step(); self.opt.zero_grad()
-                    epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
+                    total_mid_loss = total_mid_loss*(i+1)/(i+2) + mid_loss.item()/(i+2)
+                    total_pred_loss = total_pred_loss*(i+1)/(i+2) + pred_loss.item()/(i+2)
                     if ARGS.test: break
                 if ARGS.test: break
-                print(f'Epoch: {epoch}\tLoss: {epoch_loss.item()}')
+                print(f'Epoch: {epoch}\tMid Loss: {total_mid_loss}, Pred Loss {total_pred_loss}')
             torch.save({'encoder':self.enc,'decoder':self.dec},'pretrained.pt')
         for epoch in range(ARGS.epochs):
             print(f'Epoch: {epoch}')
             determin_dl = data.DataLoader(self.dataset,batch_sampler=data.BatchSampler(data.SequentialSampler(self.dataset),461,drop_last=False),pin_memory=False)        
             for i, (xb,yb,idx) in enumerate(determin_dl):
-                latent = self.enc(xb)
-                total_latents = latent.detach().cpu() if i==0 else torch.cat([total_latents,latent.detach().cpu()],dim=0)
+                mid, latent = self.enc(xb)
+                total_mids = mid.view(mid.shape[0],-1).detach().cpu() if i==0 else torch.cat([total_mids,mid.view(mid.shape[0],-1).detach().cpu()],dim=0)
+                total_latents = latent.view(latent.shape[0],-1).detach().cpu() if i==0 else torch.cat([total_latents,latent.view(latent.shape[0],-1).detach().cpu()],dim=0)
             if ARGS.test: self.labels = np.zeros(len(total_latents),dtype=np.int32)
-            elif epoch==0 and ARGS.pretrained: self.labels, self.full_labels = np.load('saved_labels.npy'), np.load('saved_full_labels.npy')
+            elif epoch==0 and ARGS.pretrained: 
+                self.pixel_labels, self.mid_labels, self.latent_labels, self.pruned_pixel_labels, self.pruned_mid_labels, self.pruned_latent_labels  = np.load('saved_pixel_labels.npy'), np.load('saved_mid_labels.npy'), np.load('saved_latent_labels.npy'), np.load('saved_pruned_pixel_labels.npy'), np.load('saved_pruned_mid_labels.npy'), np.load('saved_pruned_latent_labels.npy')
+                self.total_labels = np.stack([self.pixel_labels,self.mid_labels,self.latent_labels])
             else:
+                print('Umapping pixels...')
+                self.umapped_pixels = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(self.dataset.x.view(60000,-1).detach().cpu().numpy())
+                print('Umapping mids...')
+                self.umapped_mids = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(total_mids.squeeze())
+                print('Umapping latents...')
                 self.umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(total_latents.squeeze())
-                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-                self.full_labels = scanner.fit_predict(self.umapped_latents)
-                self.labels = np.copy(self.full_labels)
-                self.labels[scanner.probabilities_<1.0]=-1
-                if epoch==0: np.save('saved_labels.npy',self.labels)
-                if epoch==0: np.save('saved_full_labels.npy',self.full_labels)
-            self.centroids = torch.stack([total_latents[self.labels==i,:,0,0].mean(axis=0) for i in range(max(self.labels)+1)]).cuda()
-            self.check_latents(self.centroids)
-            self.num_classes = max(self.labels+1)
-            d = utils.Dataholder(self.dataset.x,torch.tensor(self.labels,device='cuda').long())
+                pixel_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+                mid_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+                latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+                self.pixel_labels = pixel_scanner.fit_predict(self.umapped_pixels)
+                self.mid_labels = mid_scanner.fit_predict(self.umapped_mids)
+                self.latent_labels = latent_scanner.fit_predict(self.umapped_latents)
+                ordered = sorted(['pixel_labels', 'mid_labels', 'latent_labels', 'true_labels'],key=lambda x: max(getattr(self,x)), reverse=True)
+                lar = getattr(self,ordered[0])
+                for not_lar_name in ordered[1:]:
+                    not_lar = getattr(self,not_lar_name)
+                    not_lar_trans = translate_labellings(not_lar,lar)
+                    not_lar = np.array([not_lar_trans[l] for l in not_lar])
+                    setattr(self,not_lar_name,not_lar)
+                #self.pixel_labels = np.array([pixel_trans[l] for l in self.pixel_labels])
+                #self.mid_labels = np.array([mid_trans[l] for l in self.mid_labels])
+                #self.latent_labels = np.array([latent_trans[l] for l in self.latent_labels])
+                self.pruned_pixel_labels = np.copy(self.pixel_labels)
+                self.pruned_mid_labels = np.copy(self.mid_labels)
+                self.pruned_latent_labels = np.copy(self.latent_labels)
+                self.pruned_pixel_labels[pixel_scanner.probabilities_<1.0] = -1
+                self.pruned_mid_labels[mid_scanner.probabilities_<1.0] = -1
+                self.pruned_latent_labels[latent_scanner.probabilities_<1.0] = -1
+                if epoch==0 and ARGS.save_labels: 
+                    np.save(f'saved_pixel_labels_seed{ARGS.seed}.npy',self.pixel_labels)
+                    np.save(f'saved_mid_labels_seed{ARGS.seed}.npy',self.mid_labels)
+                    np.save(f'saved_latent_labels_seed{ARGS.seed}.npy',self.latent_labels)
+                    np.save(f'saved_pruned_pixel_labels_seed{ARGS.seed}.npy',self.pruned_pixel_labels)
+                    np.save(f'saved_pruned_mid_labels_seed{ARGS.seed}.npy',self.pruned_mid_labels)
+                    np.save(f'saved_pruned_latent_labels_seed{ARGS.seed}.npy',self.pruned_latent_labels)
+            
+                if ARGS.pretrain_only: return
+            self.total_labels = np.stack([self.pixel_labels,self.mid_labels,self.latent_labels])
+            all_agree = np.array([np.unique(self.total_labels[:,i]).shape[0] <= 1 for i in range(60000)])
+            self.pruned_pixel_labels[~all_agree] = -1
+            self.pruned_mid_labels[~all_agree] = -1
+            self.pruned_latent_labels[~all_agree] = -1
+            self.mid_centroids = torch.stack([total_mids[(self.pruned_mid_labels==i)*(all_agree),:].mean(axis=0) for i in set(self.pruned_mid_labels) if i != -1]).cuda()
+            self.latent_centroids = torch.stack([total_latents[(self.pruned_latent_labels==i)*(all_agree),:].mean(axis=0) for i in set(self.pruned_latent_labels) if i != -1]).cuda()
+            self.check_latents(self.latent_centroids,stacked=True,show=False)
+            self.num_pixel_classes = max(self.pixel_labels+1)
+            self.num_mid_classes = max(self.mid_labels+1)
+            self.num_latent_classes = max(self.latent_labels+1)
+            d = utils.Dataholder(self.dataset.x,torch.tensor(self.pruned_latent_labels,device='cuda').long())
+            #self.labeled_ds = utils.KwargTransformDataset(transforms=[utils.to_float_tensor,utils.add_colour_dimension],device='cuda',x=self.dataset.x,y=self.dataset.y,mid_centroids=self.mid_centroids,latent_centroids=self.latent_centroids)
             self.labeled_ds = utils.TransformDataset(d,[utils.to_float_tensor,utils.add_colour_dimension],x_only=False,device='cuda')
             self.closs_func=nn.MSELoss(reduction='none')
-            print(f'Num clusters: {self.num_classes}\t Num classified: {sum(self.full_labels>=0)}')
-            print(adjusted_rand_score(self.full_labels,self.true_labels),adjusted_mutual_info_score(self.full_labels,self.true_labels))
+            print(f'Num pixel clusters: {self.num_pixel_classes}\t Num classified: {sum(self.pixel_labels>=0)}')
+            print(f'Num mid clusters: {self.num_mid_classes}\t Num classified: {sum(self.mid_labels>=0)}')
+            print(f'Num latent clusters: {self.num_latent_classes}\t Num classified: {sum(self.latent_labels>=0)}')
+            print(adjusted_rand_score(self.pixel_labels,self.true_labels),adjusted_mutual_info_score(self.pixel_labels,self.true_labels))
+            print(adjusted_rand_score(self.mid_labels,self.true_labels),adjusted_mutual_info_score(self.mid_labels,self.true_labels))
+            print(adjusted_rand_score(self.latent_labels,self.true_labels),adjusted_mutual_info_score(self.latent_labels,self.true_labels))
             #ax = sns.heatmap(get_confusion_mat(self.true_labels,self.labels)); plt.show(); plt.clf()
             self.train_labels(1 if ARGS.test else 1+epoch,ARGS.batch_size)
             if ARGS.test: break
             for epoch in range(10):
                 epoch_loss = 0
                 for i, (xb,yb,idx) in enumerate(dl): 
-                    latent = self.enc(xb)
+                    enc_mid, latent = self.enc(xb)
                     latent = utils.noiseify(latent,ARGS.noise)
-                    loss = self.ploss_func(self.dec(latent),xb)
+                    dec_mid, pred = self.dec(latent)
+                    loss = self.ploss_func(pred,xb)
                     loss.backward(); self.opt.step(); self.opt.zero_grad()
                     epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
                 print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
@@ -99,6 +151,7 @@ class ConceptLearner():
     def train_labels(self,epochs,bs):
         dl = data.DataLoader(self.labeled_ds,batch_sampler=data.BatchSampler(data.RandomSampler(self.labeled_ds),bs,drop_last=False),pin_memory=False)        
         ce_loss_func = nn.CrossEntropyLoss(reduction='none')
+        set_trace()
         for epoch in range(epochs):
             num_easys = 0
             total_rloss = 0.
@@ -108,18 +161,25 @@ class ConceptLearner():
             total_rrloss = 0.
             rloss_list = []
             for i, (xb,yb,idx) in enumerate(dl):
-                latent = self.enc(xb)
+                enc_mid,latent  = self.enc(xb)
                 hmask = yb>=0
                 yb_ = yb*hmask
-                centroid_targets = self.centroids[yb_]
-                crpred = self.dec(centroid_targets[:,:,None,None])
-                rpred = self.dec(utils.noiseify(latent,ARGS.noise))
+                mid_centroid_targets = self.mid_centroids[self.mid_labels[idx]]
+                latent_centroid_targets = self.latent_centroids[yb_]
+                cdec_mid,crpred = self.dec(latent_centroid_targets[:,:,None,None])
+                dec_mid,rpred = self.dec(utils.noiseify(latent,ARGS.noise))
                 rloss_ = self.loss_func(rpred,xb).mean(dim=[1,2,3])
-                closs_ = self.closs_func(latent,centroid_targets[:,:,None,None]).mean(dim=1)
+                closs_ = self.closs_func(latent,latent_centroid_targets[:,:,None,None]).mean(dim=1)
                 crloss_ = self.loss_func(crpred,xb).mean(dim=[1,2,3])
-                inverse_dists = self.closs_func(latent[:,None,:,0,0],self.centroids).mean(dim=-1)**-1
+                def get_gauss_loss(preds,centroids,targets):
+                    inverse_dists = self.closs_func(preds[:,None,:,0,0],centroids).mean(dim=-1)**-1
+                    inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
+                    return ce_loss_func(inverse_dists,targets)
+                inverse_dists = self.closs_func(latent[:,None,:,0,0],self.latent_centroids).mean(dim=-1)**-1
                 inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
                 gauss_loss = ce_loss_func(inverse_dists,yb_)
+                assert (gauss_loss == get_gauss_loss(latent,self.latent_centroids,yb_)).all()
+                mid_gauss_loss = get_gauss_loss(latent,self.latent_centroids,yb_)
                 #crmask = crloss_ < ARGS.crthresh
                 #mask = hmask*crmask
                 mask = hmask
@@ -138,11 +198,12 @@ class ConceptLearner():
                 loss.backward(); self.opt.step(); self.opt.zero_grad()
             print(f'R Loss {total_rloss}, C Loss: {total_closs}, CR Loss: {total_crloss}, Gauss Loss {total_gauss_loss} num easys: {num_easys}')
     
-    def check_latents(self,latents,show=False):
+    def check_latents(self,latents,show,stacked):
         _, axes = plt.subplots(6,2,figsize=(7,7))
         for i,latent in enumerate(latents):
             try:
                 outimg = self.dec(latent[None,:,None,None])
+                if stacked: outimg = outimg[-1]
                 axes.flatten()[i].imshow(outimg[0,0])
             except: set_trace()
         if show: plt.show()
@@ -151,9 +212,11 @@ class ConceptLearner():
 def label_assignment_cost(labels1,labels2,label1,label2):
     return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
 
-def translate_labellings(labels1,labels2):
-    cost_matrix = np.array([[label_assignment_cost(labels1,labels2,l1,l2) for l2 in set(labels2)] for l1 in set(labels1)])
+def translate_labellings(trans_from_labels,trans_to_labels):
+    cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    print(cost_matrix.shape)
+    assert len(col_ind) == max(trans_from_labels)+1
     return col_ind
 
 def get_confusion_mat(labels1,labels2):
@@ -181,10 +244,13 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size',type=int,default=64)
     parser.add_argument('--enc_lr',type=float,default=1e-3)
     parser.add_argument('--dec_lr',type=float,default=1e-3)
+    parser.add_argument('--stacked',action='store_true')
+    parser.add_argument('--pretrain_only',action='store_true')
     parser.add_argument('--clmbda',type=float,default=1.)
     parser.add_argument('--noise',type=float,default=1.5)
     parser.add_argument('--crthresh',type=float,default=0.1)
     parser.add_argument('--clamp_gauss_loss',type=float,default=0.1)
+    parser.add_argument('--save_labels',action='store_false',default=True)
     ARGS = parser.parse_args()
     print(ARGS)
 
@@ -196,9 +262,13 @@ if __name__ == "__main__":
     
     global LOAD_START_TIME; LOAD_START_TIME = time()
 
-    enc,dec,lin = utils.get_enc_dec('cuda',latent_size=ARGS.NZ)
+    #enc,dec,lin = utils.get_enc_dec('cuda',latent_size=ARGS.NZ)
+    enc_b1, enc_b2 = utils.get_enc_blocks('cuda',ARGS.NZ)
+    enc = utils.EncoderStacked(enc_b1,enc_b2)
+    dec = utils.GeneratorStacked(nz=ARGS.NZ,ngf=32,nc=1,dropout_p=0.)
+    dec.to('cuda')
     mnist_ds = utils.get_mnist_dset(x_only=True)
     mnist_train = utils.get_mnist_dset(x_only=False)
     mnist = utils.get_mnist_dset()
-    simple_clearner = ConceptLearner(enc,dec,lin,mnist,opt=torch.optim.Adam,loss_func=nn.L1Loss(reduction='none'))
-    simple_clearner.train_ae(ARGS)
+    clearner = ConceptLearner(enc,dec,mnist,opt=torch.optim.Adam,loss_func=nn.L1Loss(reduction='none'))
+    clearner.train_ae(ARGS)

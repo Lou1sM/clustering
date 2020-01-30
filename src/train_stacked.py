@@ -33,19 +33,8 @@ import random
 
 NZ=50
 
-class EncoderStacked(nn.Module):
-    def __init__(self,block1,block2): 
-        super(EncoderStacked, self).__init__()
-        self.block1,self.block2 = block1,block2
-
-    def forward(self,inp):
-        out1 = self.block1(inp)
-        out2 = self.block2(out1)
-        return out1, out2
-
-
 enc_b1, enc_b2 = utils.get_enc_blocks('cuda',NZ)
-enc = EncoderStacked(enc_b1,enc_b2)
+enc = utils.EncoderStacked(enc_b1,enc_b2)
 dec = utils.GeneratorStacked(nz=NZ,ngf=32,nc=1,dropout_p=0.)
 dec.to('cuda')
 dl = utils.get_mnist_dloader(x_only=True)
