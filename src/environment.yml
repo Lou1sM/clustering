@@ -207,7 +207,7 @@ dependencies:
   - thinc=7.3.0=py37hc9558a2_0
   - thrift-cpp=0.12.0=hf3afdfd_1004
   - tk=8.6.10=hed695b0_0
-  - torchvision=0.2.1=py37_1000
+  #- torchvision=0.2.1=py37_1000
   - tornado=6.0.3=py37h516909a_0
   - tqdm=4.40.2=py_0
   - traitlets=4.3.3=py37_0
