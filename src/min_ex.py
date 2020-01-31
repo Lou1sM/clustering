@@ -55,14 +55,14 @@ class ConceptLearner():
                     dec_mid, pred = dec(utils.noiseify(latent,ARGS.noise))
                     mid_loss = self.loss_func(enc_mid,dec_mid).mean()
                     pred_loss = self.loss_func(pred,xb).mean()
-                    loss = mid_loss + pred_loss
+                    loss = ARGS.mid_lmbda*mid_loss + pred_loss
                     loss.backward(); self.opt.step(); self.opt.zero_grad()
                     total_mid_loss = total_mid_loss*(i+1)/(i+2) + mid_loss.item()/(i+2)
                     total_pred_loss = total_pred_loss*(i+1)/(i+2) + pred_loss.item()/(i+2)
                     if ARGS.test: break
                 if ARGS.test: break
                 print(f'Epoch: {epoch}\tMid Loss: {total_mid_loss}, Pred Loss {total_pred_loss}')
-            torch.save({'encoder':self.enc,'decoder':self.dec},'pretrained.pt')
+            torch.save({'encoder':self.enc,'decoder':self.dec},f'pretrained_seed{ARGS.seed}.pt')
         for epoch in range(ARGS.epochs):
             print(f'Epoch: {epoch}')
             determin_dl = data.DataLoader(self.dataset,batch_sampler=data.BatchSampler(data.SequentialSampler(self.dataset),461,drop_last=False),pin_memory=False)        
@@ -164,7 +164,7 @@ class ConceptLearner():
                 enc_mid,latent  = self.enc(xb)
                 hmask = yb>=0
                 yb_ = yb*hmask
-                mid_centroid_targets = self.mid_centroids[self.mid_labels[idx]]
+                mid_centroid_targets = self.mid_centroids[self.pruned_mid_labels[idx]]
                 latent_centroid_targets = self.latent_centroids[yb_]
                 cdec_mid,crpred = self.dec(latent_centroid_targets[:,:,None,None])
                 dec_mid,rpred = self.dec(utils.noiseify(latent,ARGS.noise))
@@ -216,7 +216,7 @@ def translate_labellings(trans_from_labels,trans_to_labels):
     cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     print(cost_matrix.shape)
-    assert len(col_ind) == max(trans_from_labels)+1
+    assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
     return col_ind
 
 def get_confusion_mat(labels1,labels2):
@@ -247,6 +247,7 @@ if __name__ == "__main__":
     parser.add_argument('--stacked',action='store_true')
     parser.add_argument('--pretrain_only',action='store_true')
     parser.add_argument('--clmbda',type=float,default=1.)
+    parser.add_argument('--mid_lmbda',type=float,default=1.)
     parser.add_argument('--noise',type=float,default=1.5)
     parser.add_argument('--crthresh',type=float,default=0.1)
     parser.add_argument('--clamp_gauss_loss',type=float,default=0.1)

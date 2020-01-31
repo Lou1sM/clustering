@@ -8,6 +8,7 @@ import matplotlib.cm as cm
 import torch.nn as nn
 import torch
 import matplotlib.pyplot as plt
+from scipy.optimize import linear_sum_assignment
 import numpy as np
 import seaborn as sns
 import torchvision.datasets as tdatasets
@@ -402,3 +403,26 @@ def asMinutes(s):
     m = math.floor(s / 60)
     s -= m * 60
     return '%dm %ds' % (m, s)
+
+def label_assignment_cost(labels1,labels2,label1,label2):
+    return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
+
+def translate_labellings(trans_from_labels,trans_to_labels):
+    cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    print(cost_matrix.shape)
+    assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
+    return col_ind
+
+def get_confusion_mat(labels1,labels2):
+    if max(labels1) != max(labels2): 
+        print('Different numbers of clusters, no point trying'); return
+    trans_labels = translate_labellings(labels1,labels2)
+    num_labels = max(labels1)+1
+    confusion_matrix = np.array([[len([idx for idx in range(len(labels2)) if labels1[idx]==l1 and labels2[idx]==l2]) for l2 in range(num_labels)] for l1 in range(num_labels)])
+    confusion_matrix = confusion_matrix[:,trans_labels]
+    idx = np.arange(num_labels)
+    confusion_matrix[idx,idx]=0
+    return confusion_matrix
+
+
