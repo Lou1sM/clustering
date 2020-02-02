@@ -40,7 +40,6 @@ class AETrainer():
         
     def pretrain_ae(self,ae):
         self.aeids.append(ae.identifier)
-        print(self.aeids)
         DATASET = utils.get_mnist_dset()
         dl = data.DataLoader(DATASET,batch_sampler=data.BatchSampler(data.RandomSampler(DATASET),self.args.batch_size,drop_last=True),pin_memory=False)        
         loss_func=nn.L1Loss(reduction='none')
@@ -56,7 +55,8 @@ class AETrainer():
                 for i,(xb,yb,idx) in enumerate(dl):
                     print(i)
                     enc_mid, latent = ae.enc(xb)
-                    dec_mid, pred = ae.dec(utils.noiseify(latent,self.args.noise))
+                    #dec_mid, pred = ae.dec(utils.noiseify(latent,self.args.noise))
+                    dec_mid, pred = ae.dec(latent,self.args.noise)
                     mid_loss = loss_func(enc_mid,dec_mid).mean()
                     pred_loss = loss_func(pred,xb).mean()
                     loss = self.args.mid_lmbda*mid_loss + pred_loss
@@ -196,9 +196,9 @@ def generate_labels_and_vecs(dataset,ae):
     pruned_latent_labels[latent_scanner.probabilities_<1.0] = -1
     np.save(f'../labels/mid_labels{ae.identifier}.npy',mid_labels)
     np.save(f'../labels/latent_labels{ae.identifier}.npy',latent_labels)
-    np.save(f'../vecs/midls{AE.identifier}.npy',mids)
-    np.save(f'../vecs/latentls{AE.identifier}.npy',latentls)
-    return {'aeid':AE.identifier,'mids':mids,'latents':latents,'mid_labels':mid_labels,'latent_labels':latent_labels}
+    np.save(f'../vecs/midls{ae.identifier}.npy',mids)
+    np.save(f'../vecs/latentls{ae.identifier}.npy',latentls)
+    return {'aeid':ae.identifier,'mids':mids,'latents':latents,'mid_labels':mid_labels,'latent_labels':latent_labels}
 
 def get_num_labels(labels): 
     assert labels.ndim == 1
