@@ -438,3 +438,13 @@ def debable(labellings_list):
 def ask_ensemble(l): return (np.expand_dims(np.arange(l.max()+1),0)==np.expand_dims(l,2)).sum(axis=0)
 
 
+def check_latents(dec,latents,show,stacked):
+    _, axes = plt.subplots(6,2,figsize=(7,7))
+    for i,latent in enumerate(latents):
+        try:
+            outimg = dec(latent[None,:,None,None])
+            if stacked: outimg = outimg[-1]
+            axes.flatten()[i].imshow(outimg[0,0])
+        except: set_trace()
+    if show: plt.show()
+    plt.clf()
