@@ -408,11 +408,12 @@ def label_assignment_cost(labels1,labels2,label1,label2):
     return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
 
 def translate_labellings(trans_from_labels,trans_to_labels):
+    # What you're translating into has to be compressed, otherwise gives wrong results
     cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     print(cost_matrix.shape)
     assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
-    return col_ind
+    return np.array([col_ind[l] for l in trans_from_labels])
 
 def get_confusion_mat(labels1,labels2):
     if max(labels1) != max(labels2): 
@@ -424,5 +425,16 @@ def get_confusion_mat(labels1,labels2):
     idx = np.arange(num_labels)
     confusion_matrix[idx,idx]=0
     return confusion_matrix
+
+def debable(labellings_list):
+    labellings_list.sort(key=lambda x: x.max(),reverse=True)
+    pivot = labellings_list[0]
+    translated_list = [pivot]
+    for not_lar in labellings_list[1:]:
+        not_lar_translated = translate_labellings(not_lar,pivot)
+        translated_list.append(not_lar_translated)
+    return translated_list
+
+def ask_ensemble(l): return (np.expand_dims(np.arange(l.max()+1),0)==np.expand_dims(l,2)).sum(axis=0)
 
 

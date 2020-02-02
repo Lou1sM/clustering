@@ -26,8 +26,8 @@ import torch.nn.functional as F
 import utils
 import hdbscan
 import umap.umap_ as umap
+import load_labels
 from sklearn.metrics import adjusted_rand_score,adjusted_mutual_info_score
-from scipy.optimize import linear_sum_assignment
 import random
 
 
@@ -75,16 +75,17 @@ class ConceptLearner():
                 self.pixel_labels, self.mid_labels, self.latent_labels, self.pruned_pixel_labels, self.pruned_mid_labels, self.pruned_latent_labels  = np.load('saved_pixel_labels.npy'), np.load('saved_mid_labels.npy'), np.load('saved_latent_labels.npy'), np.load('saved_pruned_pixel_labels.npy'), np.load('saved_pruned_mid_labels.npy'), np.load('saved_pruned_latent_labels.npy')
                 self.total_labels = np.stack([self.pixel_labels,self.mid_labels,self.latent_labels])
             else:
-                print('Umapping pixels...')
-                self.umapped_pixels = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(self.dataset.x.view(60000,-1).detach().cpu().numpy())
+                if epoch==0:
+                    print('Umapping pixels...')
+                    self.umapped_pixels = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(self.dataset.x.view(60000,-1).detach().cpu().numpy())
+                    pixel_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+                    self.pixel_labels = pixel_scanner.fit_predict(self.umapped_pixels)
                 print('Umapping mids...')
                 self.umapped_mids = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(total_mids.squeeze())
                 print('Umapping latents...')
                 self.umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(total_latents.squeeze())
-                pixel_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 mid_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-                self.pixel_labels = pixel_scanner.fit_predict(self.umapped_pixels)
                 self.mid_labels = mid_scanner.fit_predict(self.umapped_mids)
                 self.latent_labels = latent_scanner.fit_predict(self.umapped_latents)
                 ordered = sorted(['pixel_labels', 'mid_labels', 'latent_labels', 'true_labels'],key=lambda x: max(getattr(self,x)), reverse=True)
@@ -92,8 +93,7 @@ class ConceptLearner():
                 for not_lar_name in ordered[1:]:
                     not_lar = getattr(self,not_lar_name)
                     not_lar_trans = translate_labellings(not_lar,lar)
-                    not_lar = np.array([not_lar_trans[l] for l in not_lar])
-                    setattr(self,not_lar_name,not_lar)
+                    setattr(self,not_lar_name,not_lar_trans)
                 #self.pixel_labels = np.array([pixel_trans[l] for l in self.pixel_labels])
                 #self.mid_labels = np.array([mid_trans[l] for l in self.mid_labels])
                 #self.latent_labels = np.array([latent_trans[l] for l in self.latent_labels])
@@ -104,7 +104,7 @@ class ConceptLearner():
                 self.pruned_mid_labels[mid_scanner.probabilities_<1.0] = -1
                 self.pruned_latent_labels[latent_scanner.probabilities_<1.0] = -1
                 if epoch==0 and ARGS.save_labels: 
-                    np.save(f'saved_pixel_labels_seed{ARGS.seed}.npy',self.pixel_labels)
+                    #np.save(f'saved_pixel_labels_seed{ARGS.seed}.npy',self.pixel_labels)
                     np.save(f'saved_mid_labels_seed{ARGS.seed}.npy',self.mid_labels)
                     np.save(f'saved_latent_labels_seed{ARGS.seed}.npy',self.latent_labels)
                     np.save(f'saved_pruned_pixel_labels_seed{ARGS.seed}.npy',self.pruned_pixel_labels)
@@ -208,27 +208,10 @@ class ConceptLearner():
             except: set_trace()
         if show: plt.show()
         plt.clf()
+    
+   
+def train_ae(x): x.train_ae(ARGS)
 
-def label_assignment_cost(labels1,labels2,label1,label2):
-    return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
-
-def translate_labellings(trans_from_labels,trans_to_labels):
-    cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    print(cost_matrix.shape)
-    assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
-    return col_ind
-
-def get_confusion_mat(labels1,labels2):
-    if max(labels1) != max(labels2): 
-        print('Different numbers of clusters, no point trying'); return
-    trans_labels = translate_labellings(labels1,labels2)
-    num_labels = max(labels1)+1
-    confusion_matrix = np.array([[len([idx for idx in range(len(labels2)) if labels1[idx]==l1 and labels2[idx]==l2]) for l2 in range(num_labels)] for l1 in range(num_labels)])
-    confusion_matrix = confusion_matrix[:,trans_labels]
-    idx = np.arange(num_labels)
-    confusion_matrix[idx,idx]=0
-    return confusion_matrix
 
 if __name__ == "__main__":
     import argparse
@@ -242,6 +225,7 @@ if __name__ == "__main__":
     parser.add_argument('--pretrain_epochs',type=int,default=10)
     parser.add_argument('--epochs',type=int,default=8)
     parser.add_argument('--batch_size',type=int,default=64)
+    parser.add_argument('--num_aes',type=int,default=10)
     parser.add_argument('--enc_lr',type=float,default=1e-3)
     parser.add_argument('--dec_lr',type=float,default=1e-3)
     parser.add_argument('--stacked',action='store_true')
@@ -264,12 +248,18 @@ if __name__ == "__main__":
     global LOAD_START_TIME; LOAD_START_TIME = time()
 
     #enc,dec,lin = utils.get_enc_dec('cuda',latent_size=ARGS.NZ)
-    enc_b1, enc_b2 = utils.get_enc_blocks('cuda',ARGS.NZ)
-    enc = utils.EncoderStacked(enc_b1,enc_b2)
-    dec = utils.GeneratorStacked(nz=ARGS.NZ,ngf=32,nc=1,dropout_p=0.)
-    dec.to('cuda')
     mnist_ds = utils.get_mnist_dset(x_only=True)
     mnist_train = utils.get_mnist_dset(x_only=False)
     mnist = utils.get_mnist_dset()
-    clearner = ConceptLearner(enc,dec,mnist,opt=torch.optim.Adam,loss_func=nn.L1Loss(reduction='none'))
-    clearner.train_ae(ARGS)
+    clearners = []
+    for i in range(ARGS.num_aes):
+        enc_b1, enc_b2 = utils.get_enc_blocks('cuda',ARGS.NZ)
+        enc = utils.EncoderStacked(enc_b1,enc_b2)
+        dec = utils.GeneratorStacked(nz=ARGS.NZ,ngf=32,nc=1,dropout_p=0.)
+        dec.to('cuda')
+        clearner = ConceptLearner(enc,dec,mnist,opt=torch.optim.Adam,loss_func=nn.L1Loss(reduction='none'))
+        clearners.append(clearner)
+    from multiprocessing import Pool
+    with Pool(processes=10) as pool:
+        pool.map(train_ae, clearners)
+        #pool.map(print, range(5))
