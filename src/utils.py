@@ -23,6 +23,12 @@ def reload():
     import importlib, utils
     importlib.reload(utils)
 
+class AE(nn.Module):
+    def __init__(self,enc,dec,identifier): 
+        super(AE, self).__init__()
+        self.enc,self.dec = enc,dec
+        self.identifier = identifier
+
 class NonsenseDiscriminator(nn.Module):
     def __init__(self):
         super().__init__()
@@ -437,7 +443,6 @@ def debable(labellings_list):
 
 def ask_ensemble(l): return (np.expand_dims(np.arange(l.max()+1),0)==np.expand_dims(l,2)).sum(axis=0)
 
-
 def check_latents(dec,latents,show,stacked):
     _, axes = plt.subplots(6,2,figsize=(7,7))
     for i,latent in enumerate(latents):
@@ -448,3 +453,8 @@ def check_latents(dec,latents,show,stacked):
         except: set_trace()
     if show: plt.show()
     plt.clf()
+
+def get_num_labels(labels): 
+    assert labels.ndim == 1
+    return  len(set([l for l in labels if l != -1]))
+
