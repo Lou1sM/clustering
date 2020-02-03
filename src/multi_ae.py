@@ -1,3 +1,4 @@
+import sys
 import warnings
 warnings.filterwarnings('ignore')
 import gc
@@ -55,8 +56,7 @@ class AETrainer():
                 for i,(xb,yb,idx) in enumerate(dl):
                     print(i)
                     enc_mid, latent = ae.enc(xb)
-                    #dec_mid, pred = ae.dec(utils.noiseify(latent,self.args.noise))
-                    dec_mid, pred = ae.dec(latent,self.args.noise)
+                    dec_mid, pred = ae.dec(utils.noiseify(latent,self.args.noise))
                     mid_loss = loss_func(enc_mid,dec_mid).mean()
                     pred_loss = loss_func(pred,xb).mean()
                     loss = self.args.mid_lmbda*mid_loss + pred_loss
@@ -67,7 +67,7 @@ class AETrainer():
                 if self.args.test: break
                 print(f'Epoch: {epoch}\tMid Loss: {total_mid_loss}, Pred Loss {total_pred_loss}')
             torch.save({'encoder':ae.enc,'decoder':ae.dec},f'../checkpoints/pt{ae.identifier}.pt')
-        generate_labels_and_vecs(DATASET,ae)
+        return generate_labels_and_vecs(DATASET,ae)
   
     def load_saved_labels(self,aeids):
         self.mid_labels_by_id = {aeid: np.load(f'../labels/mid_labels{aeid}.npy') for aeid in aeids}
@@ -125,7 +125,7 @@ def train_ae(ae,args,mid_centroids_by_id,latent_centroids_by_id,ensemble_labels,
     opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
     opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
     gt_labels = torch.tensor(ensemble_labels,device='cuda')
-    for epoch in range(1):
+    for epoch in range(10):
         epoch_loss = 0
         for i, (xb,yb,idx) in enumerate(dl): 
             enc_mid, latent = ae.enc(xb)
@@ -190,14 +190,10 @@ def generate_labels_and_vecs(dataset,ae):
     latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
     mid_labels = mid_scanner.fit_predict(umapped_mids)
     latent_labels = latent_scanner.fit_predict(umapped_latents)
-    pruned_mid_labels = np.copy(mid_labels)
-    pruned_latent_labels = np.copy(latent_labels)
-    pruned_mid_labels[mid_scanner.probabilities_<1.0] = -1
-    pruned_latent_labels[latent_scanner.probabilities_<1.0] = -1
     np.save(f'../labels/mid_labels{ae.identifier}.npy',mid_labels)
     np.save(f'../labels/latent_labels{ae.identifier}.npy',latent_labels)
     np.save(f'../vecs/midls{ae.identifier}.npy',mids)
-    np.save(f'../vecs/latentls{ae.identifier}.npy',latentls)
+    np.save(f'../vecs/latents{ae.identifier}.npy',latents)
     return {'aeid':ae.identifier,'mids':mids,'latents':latents,'mid_labels':mid_labels,'latent_labels':latent_labels}
 
 def get_num_labels(labels): 
@@ -245,6 +241,7 @@ if __name__ == "__main__":
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--build',action='store_true')
     parser.add_argument('--regen',action='store_true')
+    parser.add_argument('--redo_pretrain',action='store_true')
     ARGS = parser.parse_args()
     print(ARGS)
 
@@ -272,24 +269,27 @@ if __name__ == "__main__":
     aetrainer = AETrainer(ARGS)
     if ARGS.single:
         if ARGS.build:
-            mids_by_id,latents_by_id = {},{}
-            for i,ae in enumerate(AEs):
-                if ARGS.regen:
-                    mids,latents = generate_mids_and_latents(DATASET,ae.enc)
-                    mids = mids.detach().cpu().numpy()
-                    latents = latents.detach().cpu().numpy()
-                    mids_by_id[i] = mids
-                    latents_by_id[i] = latents
-                    np.save(f'../vecs/mids{i}.npy',mids)
-                    np.save(f'../vecs/latents{i}.npy',latents)
-                else:
-                    mids_by_id[i] = np.load(f'../vecs/mids{i}.npy')
-                    latents_by_id[i] = np.load(f'../vecs/latents{i}.npy')
-            aetrainer.mids_by_id = mids_by_id
-            aetrainer.latents_by_id = latents_by_id
-            mid_labels_by_id, latent_labels_by_id = aetrainer.load_saved_labels(range(ARGS.num_aes))
-            loaded_results = {aeid:{'mids':mids_by_id[aeid],'latents':latents_by_id[aeid],'mid_labels':mid_labels_by_id[aeid],'latent_labels':latent_labels_by_id[aeid]} for aeid in range(ARGS.num_aes)}
-            mid_centroids_by_id, latent_centroids_by_id, ensemble_labels, all_agree = aetrainer.build_ensemble_gt(loaded_results)
+            if ARGS.redo_pretrain:
+                results = [aetrainer.pretrain_ae(ae) for ae in AEs]
+                results = {r['aeid']: r for r in results}
+            else:
+                mids_by_id,latents_by_id = {},{}
+                for i,ae in enumerate(AEs):
+                    if ARGS.regen:
+                        mids,latents = generate_mids_and_latents(DATASET,ae.enc)
+                        mids = mids.detach().cpu().numpy()
+                        latents = latents.detach().cpu().numpy()
+                        mids_by_id[i] = mids
+                        latents_by_id[i] = latents
+                        np.save(f'../vecs/mids{i}.npy',mids)
+                        np.save(f'../vecs/latents{i}.npy',latents)
+                    else:
+                        mids_by_id[i] = np.load(f'../vecs/mids{i}.npy')
+                        latents_by_id[i] = np.load(f'../vecs/latents{i}.npy')
+                    mid_labels_by_id, latent_labels_by_id = aetrainer.load_saved_labels(range(ARGS.num_aes))
+                    results = {aeid:{'mids':mids_by_id[aeid],'latents':latents_by_id[aeid],'mid_labels':mid_labels_by_id[aeid],'latent_labels':latent_labels_by_id[aeid]} for aeid in range(ARGS.num_aes)}
+
+            mid_centroids_by_id, latent_centroids_by_id, ensemble_labels, all_agree = aetrainer.build_ensemble_gt(results)
         else:
             mid_centroids_by_id, latent_centroids_by_id, ensemble_labels, all_agree = aetrainer.load_ensemble(range(ARGS.num_aes))
         filled_train = partial(train_ae,args=ARGS,mid_centroids_by_id=mid_centroids_by_id,latent_centroids_by_id=latent_centroids_by_id,ensemble_labels=ensemble_labels,all_agree=all_agree)
@@ -299,14 +299,21 @@ if __name__ == "__main__":
     else: 
         import multiprocessing as mp
         ctx = mp.get_context("spawn")
-        with ctx.Pool(processes=10) as pool:
+        with ctx.Pool(processes=4) as pool:
             if ARGS.build:
                 pretrain_results = pool.map(aetrainer.pretrain_ae, AEs)
-                pretrain_results = {r['aeid']: r for r in pretrain_results}
+                pretrain_results = {r['aeid']: r for r in pretrain_results if r!=None}
+                if len(pretrain_results)==0: 
+                    print("Couldn't train any aes, aborting")
+                    sys.exit()
                 mid_centroids_by_id, latent_centroids_by_id, ensemble_labels, all_agree = aetrainer.build_ensemble_gt(pretrain_results)
             else:
                 mid_centroids_by_id, latent_centroids_by_id, ensemble_labels, all_agree = aetrainer.load_ensemble(range(ARGS.num_aes))
             filled_train = partial(train_ae,args=ARGS,mid_centroids_by_id=mid_centroids_by_id,latent_centroids_by_id=latent_centroids_by_id,ensemble_labels=ensemble_labels,all_agree=all_agree)
             print(ensemble_labels)
+            set_trace()
             results = pool.map(filled_train, AEs)
-            train_results = {r['aeid']: r for r in train_results}
+            results = {r['aeid']: r for r in results}
+            mid_centroids_by_id, latent_centroids_by_id, ensemble_labels, all_agree = aetrainer.build_ensemble_gt(results)
+            filled_train = partial(train_ae,args=ARGS,mid_centroids_by_id=mid_centroids_by_id,latent_centroids_by_id=latent_centroids_by_id,ensemble_labels=ensemble_labels,all_agree=all_agree)
+            results = pool.map(filled_train, AEs)
