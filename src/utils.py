@@ -29,6 +29,11 @@ class AE(nn.Module):
         self.enc,self.dec = enc,dec
         self.identifier = identifier
 
+    @property
+    def device(self):
+        return self.enc.block1[0][0].weight.device
+
+
 class NonsenseDiscriminator(nn.Module):
     def __init__(self):
         super().__init__()
@@ -133,6 +138,10 @@ class EncoderStacked(nn.Module):
         out1 = self.block1(inp)
         out2 = self.block2(out1)
         return out1, out2
+
+    @property
+    def device(self):
+        return self.enc.block1[0][0].weight.device
 
 class Dataholder():
     def __init__(self,train_data,train_labels): self.train_data,self.train_labels=train_data,train_labels
@@ -458,3 +467,7 @@ def get_num_labels(labels):
     assert labels.ndim == 1
     return  len(set([l for l in labels if l != -1]))
 
+def dictify_list(x,key):
+    assert isinstance(x,list)
+    assert isinstance(x[0],dict)
+    return {item[key]: item for item in x}
