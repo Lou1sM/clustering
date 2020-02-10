@@ -33,6 +33,9 @@ class AE(nn.Module):
     def device(self):
         return self.enc.block1[0][0].weight.device
 
+    @property
+    def first_row(self):
+        return self.enc.block1[0][0].weight[0]
 
 class NonsenseDiscriminator(nn.Module):
     def __init__(self):
@@ -278,6 +281,13 @@ class SuperAE(nn.Module):
     def decode_all(self,x):
         return [dec(x) for dec in self.decs]
 
+def make_ae(aeid,device,NZ):
+    with torch.cuda.device(device):
+        enc_b1, enc_b2 = get_enc_blocks('cuda',NZ)
+        enc = EncoderStacked(enc_b1,enc_b2)
+        dec = GeneratorStacked(nz=NZ,ngf=32,nc=1,dropout_p=0.)
+        dec.to(device)
+    return AE(enc,dec,aeid)
 
 def get_enc_blocks(device, latent_size):
     block1 = get_reslike_block([1,4,8,16,32,64],sz=8)
@@ -424,9 +434,13 @@ def label_assignment_cost(labels1,labels2,label1,label2):
 
 def translate_labellings(trans_from_labels,trans_to_labels):
     # What you're translating into has to be compressed, otherwise gives wrong results
+    try:
+        if max(trans_from_labels) != max(trans_to_labels): 
+            print('Different numbers of labels, shouldn\'nt be comparing')
+            set_trace()
+    except: set_trace()
     cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    print(cost_matrix.shape)
     assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
     return np.array([col_ind[l] for l in trans_from_labels])
 
@@ -469,5 +483,10 @@ def get_num_labels(labels):
 
 def dictify_list(x,key):
     assert isinstance(x,list)
+    assert len(x) > 0 
     assert isinstance(x[0],dict)
     return {item[key]: item for item in x}
+
+def accuracy(labels1,labels2):
+    trans_labels = translate_labellings(labels1,labels2)
+    return sum(trans_labels==labels2)/len(labels1)
