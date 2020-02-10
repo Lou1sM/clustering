@@ -24,7 +24,7 @@ def reload():
     importlib.reload(utils)
 
 class AE(nn.Module):
-    def __init__(self,enc,dec,identifier): 
+    def __init__(self,enc,dec,identifier):
         super(AE, self).__init__()
         self.enc,self.dec = enc,dec
         self.identifier = identifier
@@ -133,7 +133,7 @@ class GeneratorStacked(nn.Module):
         return out3, out5
 
 class EncoderStacked(nn.Module):
-    def __init__(self,block1,block2): 
+    def __init__(self,block1,block2):
         super(EncoderStacked, self).__init__()
         self.block1,self.block2 = block1,block2
 
@@ -150,20 +150,20 @@ class Dataholder():
     def __init__(self,train_data,train_labels): self.train_data,self.train_labels=train_data,train_labels
 
 class TransformDataset(data.Dataset):
-    def __init__(self,data,transforms,x_only,device): 
+    def __init__(self,data,transforms,x_only,device):
         self.transform,self.x_only,self.device=compose(transforms),x_only,device
-        if x_only: 
+        if x_only:
             self.data = data.to(self.device)
-        else: 
+        else:
             self.x,self.y = data.train_data.to(self.device), data.train_labels.to(self.device)
-            self.x.to(self.device); self.y.to(self.device) 
+            self.x.to(self.device); self.y.to(self.device)
     def __len__(self): return len(self.data) if self.x_only else len(self.x)
-    def __getitem__(self,idx): 
+    def __getitem__(self,idx):
         if self.x_only: return self.transform(self.data[idx]), idx
         else: return self.transform(self.x[idx]), self.y[idx], idx
 
 class KwargTransformDataset(data.Dataset):
-    def __init__(self,transforms,device,**kwdata): 
+    def __init__(self,transforms,device,**kwdata):
         self.transform,self.device=compose(transforms),device
         self.data_names = []
         self.num_datas = len(kwdata)
@@ -172,7 +172,7 @@ class KwargTransformDataset(data.Dataset):
             self.data_names.append(data_name)
         assert len(self.data_names) == self.num_datas
     def __len__(self): return len(getattr(self,self.data_names[0]))
-    def __getitem__(self,idx): 
+    def __getitem__(self,idx):
         return [self.transform(getattr(self,data_name)[idx]) for data_name in self.data_names] + [idx]
         if self.x_only: return self.transform(self.data[idx]), idx
         else: return self.transform(self.x[idx]), self.y[idx], idx
@@ -265,9 +265,9 @@ class SuperAE(nn.Module):
             setattr(self,f'dec{ae_num}',dec)
             self.encs.append(enc)
             self.decs.append(dec)
-        
+
     def forward(self,x):
-        latents = torch.stack([enc(x) for enc in self.encs]) 
+        latents = torch.stack([enc(x) for enc in self.encs])
         return torch.stack([dec(latents[i]) for i,dec in enumerate(self.decs)])
 
     def encode(self,x):
@@ -312,7 +312,7 @@ def get_mnist_dloader(x_only=False,device='cuda',bs=64):
     data = mnist_data.train_data if x_only else mnist_data
     mnist_dl = get_dloader(raw_data=data,x_only=x_only,batch_size=bs,device=device)
     return mnist_dl
-    
+
 def get_mnist_dset(device='cuda',x_only=False):
     mnist_data=tdatasets.MNIST(root='~/unsupervised_object_learning/data/',train=True,download=True)
     data = mnist_data.train_data if x_only else mnist_data
@@ -415,7 +415,7 @@ def check_ae_images(enc,dec,dataset,num_rows=5,stacked=False):
     idxs = np.random.randint(0,len(dataset),size=num_rows*4)
     inimgs = dataset[idxs][0]
     x = enc(inimgs)[-1] if stacked else enc(inimgs)
-    outimgs = dec(x)[-1] if stacked else dec(outimgs)
+    outimgs = dec(x)[-1] if stacked else dec(x)
     _, axes = plt.subplots(num_rows,4,figsize=(7,7))
     for i in range(num_rows):
         axes[i,0].imshow(inimgs[i,0])
@@ -435,7 +435,7 @@ def label_assignment_cost(labels1,labels2,label1,label2):
 def translate_labellings(trans_from_labels,trans_to_labels):
     # What you're translating into has to be compressed, otherwise gives wrong results
     try:
-        if max(trans_from_labels) != max(trans_to_labels): 
+        if max(trans_from_labels) != max(trans_to_labels):
             print('Different numbers of labels, shouldn\'nt be comparing')
             set_trace()
     except: set_trace()
@@ -445,7 +445,7 @@ def translate_labellings(trans_from_labels,trans_to_labels):
     return np.array([col_ind[l] for l in trans_from_labels])
 
 def get_confusion_mat(labels1,labels2):
-    if max(labels1) != max(labels2): 
+    if max(labels1) != max(labels2):
         print('Different numbers of clusters, no point trying'); return
     trans_labels = translate_labellings(labels1,labels2)
     num_labels = max(labels1)+1
@@ -455,11 +455,12 @@ def get_confusion_mat(labels1,labels2):
     confusion_matrix[idx,idx]=0
     return confusion_matrix
 
-def debable(labellings_list):
+def debable(labellings_list,pivot):
     labellings_list.sort(key=lambda x: x.max(),reverse=True)
-    pivot = labellings_list[0]
+    if pivot is None:
+        pivot = labellings_list.pop(0)
     translated_list = [pivot]
-    for not_lar in labellings_list[1:]:
+    for not_lar in labellings_list:
         not_lar_translated = translate_labellings(not_lar,pivot)
         translated_list.append(not_lar_translated)
     return translated_list
@@ -477,13 +478,13 @@ def check_latents(dec,latents,show,stacked):
     if show: plt.show()
     plt.clf()
 
-def get_num_labels(labels): 
+def get_num_labels(labels):
     assert labels.ndim == 1
     return  len(set([l for l in labels if l != -1]))
 
 def dictify_list(x,key):
     assert isinstance(x,list)
-    assert len(x) > 0 
+    assert len(x) > 0
     assert isinstance(x[0],dict)
     return {item[key]: item for item in x}
 
