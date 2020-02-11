@@ -430,6 +430,7 @@ def asMinutes(s):
     return '%dm %ds' % (m, s)
 
 def label_assignment_cost(labels1,labels2,label1,label2):
+    assert len(labels1) == len(labels2)
     return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
 
 def translate_labellings(trans_from_labels,trans_to_labels):
@@ -459,7 +460,9 @@ def debable(labellings_list,pivot):
     labellings_list.sort(key=lambda x: x.max(),reverse=True)
     if pivot is None:
         pivot = labellings_list.pop(0)
-    translated_list = [pivot]
+        translated_list = [pivot]
+    else:
+        translated_list = []
     for not_lar in labellings_list:
         not_lar_translated = translate_labellings(not_lar,pivot)
         translated_list.append(not_lar_translated)

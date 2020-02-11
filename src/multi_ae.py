@@ -40,7 +40,7 @@ def pretrain_ae(ae_dict,args):
                 if args.test: break
             if args.test: break
             print(f'AE: {aeid}, Epoch: {epoch} Mid Loss: {total_mid_loss}, Pred Loss {total_pred_loss}')
-    torch.save({'enc':ae.enc,'dec':ae.dec},f'../checkpoints/pt{aeid}.pt')
+    if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../checkpoints/pt{aeid}.pt')
     return np.array([dset[i][1] for i in range(len(dset))])
 
 def generate_vecs_single(ae_dict,args):
@@ -65,56 +65,66 @@ def generate_vecs_single(ae_dict,args):
     return {'aeid':aeid,'mids':mids,'latents':latents}
 
 def label_single(ae_output,args):
-    aeid,mids,latents = ae_output['aeid'],ae_output['mids'],ae_output['latents']
+    #aeid,mids,latents = ae_output['aeid'],ae_output['mids'],ae_output['latents']
+    aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
         print('Skipping umap and hdbscan')
         mid_labels = np.load(f'../labels/mid_labels{aeid}.npy')
         latent_labels = np.load(f'../labels/latent_labels{aeid}.npy')
-        #mid_labels = np.random.randint(10,size=60000)
-        #latent_labels = np.random.randint(10,size=60000)
+        umapped_latents = np.load(f'../umaps/latent_umaps{aeid}.npy')
     else:
-        print('Umapping mids...')
-        umapped_mids = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(mids.squeeze())
+        #print('Umapping mids...')
+        #umapped_mids = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(mids.squeeze())
         print('Umapping latents...')
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
-        print('Scanning mids...')
-        mid_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-        mid_labels = mid_scanner.fit_predict(umapped_mids)
+        #print('Scanning mids...')
+        #mid_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+        #mid_labels = mid_scanner.fit_predict(umapped_mids)
         print('Scanning latents...')
         latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         latent_labels = latent_scanner.fit_predict(umapped_latents)
         if args.save:
-            np.save(f'../labels/mid_labels{aeid}.npy',mid_labels)
+            #np.save(f'../labels/mid_labels{aeid}.npy',mid_labels)
             np.save(f'../labels/latent_labels{aeid}.npy',latent_labels)
-    return {'aeid':aeid,'mid_labels':mid_labels,'latent_labels':latent_labels}
+            np.save(f'../umaps/latent_umaps{aeid}.npy',umapped_latents)
+    #return {'aeid':aeid,'umapped_mids':umapped_mids,'umapped_latents':umapped_latents,'mid_labels':mid_labels,'latent_labels':latent_labels}
+    return {'aeid':aeid,'umapped_latents':umapped_latents,'latent_labels':latent_labels}
 
-def build_ensemble(vecs_and_labels,args,pivot):
-    nums_labels = [utils.get_num_labels(ae_results[ctype]) for ae_results in vecs_and_labels.values() for ctype in ['mid_labels','latent_labels']]
-    counts = {x:nums_labels.count(x) for x in nums_labels}
+def build_ensemble(vecs_and_labels,args,pivot,given_gt):
+    #nums_labels = [utils.get_num_labels(ae_results[ctype]) for ae_results in vecs_and_labels.values() for ctype in ['mid_labels','latent_labels']]
+    nums_labels = [utils.get_num_labels(ae_results['latent_labels']) for ae_results in vecs_and_labels.values()]
+    print(nums_labels)
+    counts = {x:nums_labels.count(x) for x in set(nums_labels)}
     ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[-1]
-    usable_mid_labels = {aeid:result['mid_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['mid_labels']) == ensemble_num_labels}
+    assert ensemble_num_labels == utils.get_num_labels(given_gt)
+    #usable_mid_labels = {aeid:result['mid_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['mid_labels']) == ensemble_num_labels}
     usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['latent_labels']) == ensemble_num_labels}
-    same_lang_labels = utils.debable(list(usable_mid_labels.values())+list(usable_latent_labels.values()),pivot=pivot)
+    #same_lang_labels = utils.debable(list(usable_mid_labels.values())+list(usable_latent_labels.values()),pivot=pivot)
+    same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=pivot)
     multihots = utils.ask_ensemble(np.stack(same_lang_labels))
-    all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==(len(usable_mid_labels) + len(usable_latent_labels)))
-    ensemble_labels = multihots.argmax(axis=1)
-    mid_centroids_by_id = {}
-    latent_centroids_by_id = {}
+    #all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==(len(usable_mid_labels) + len(usable_latent_labels)))
+    all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_latent_labels))
+    ensemble_labels_ = multihots.argmax(axis=1)
+    ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
     centroids_by_id = {}
     for aeid in vecs_and_labels.keys():
-        print(aeid,'num_mids:',utils.get_num_labels(vecs_and_labels[aeid]['mid_labels']), 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['latent_labels']))
-    for aeid in set(usable_mid_labels.keys()).intersection(set(usable_latent_labels.keys())):
+        #print(aeid,'num_mids:',utils.get_num_labels(vecs_and_labels[aeid]['mid_labels']), 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['latent_labels']))
+        print(aeid, 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['latent_labels']))
+    #for aeid in set(usable_mid_labels.keys()).intersection(set(usable_latent_labels.keys())):
+    for aeid in set(usable_latent_labels.keys()):
         new_centroid_info={'aeid':aeid}
         if  not any([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             print('No all agree vecs for centroids')
             continue
-        try:mid_centroids = np.stack([vecs_and_labels[aeid]['mids'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels))])
-        except:set_trace()
-        assert (mid_centroids == mid_centroids).all()
-        new_centroid_info['mid_centroids'] = mid_centroids
-        if args.save: np.save(f'../centroids/mid_centroids{aeid}.npy', mid_centroids)
-        latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels))])
-        assert (latent_centroids == latent_centroids).all()
+        #try:mid_centroids = np.stack([vecs_and_labels[aeid]['mids'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels))])
+        #except:set_trace()
+        #assert (mid_centroids == mid_centroids).all()
+        #new_centroid_info['mid_centroids'] = mid_centroids
+        #if args.save: np.save(f'../centroids/mid_centroids{aeid}.npy', mid_centroids)
+        latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
+        try:
+            assert (latent_centroids == latent_centroids).all()
+        except: set_trace()
         new_centroid_info['latent_centroids'] = latent_centroids
         if args.save: np.save(f'../centroids/latent_centroids{aeid}.npy', latent_centroids)
         centroids_by_id[aeid] = new_centroid_info
@@ -123,7 +133,7 @@ def build_ensemble(vecs_and_labels,args,pivot):
     if args.save:
         np.save('ensemble_labels.npy', ensemble_labels)
         np.save('all_agree.npy', all_agree)
-    return centroids_by_id, ensemble_labels, all_agree
+    return centroids_by_id, ensemble_labels_, all_agree
 
 def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree):
     device = torch.device(f'cuda:{args.gpu}')
@@ -134,7 +144,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree):
             pretrain_ae(ae_dict,args=args)
             return
         centroids_dict = centroids_by_id[aeid]
-        mid_centroids = torch.tensor(centroids_dict['mid_centroids'],device='cuda')
+        #mid_centroids = torch.tensor(centroids_dict['mid_centroids'],device='cuda')
         latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
 
         DATASET = utils.get_mnist_dset()
@@ -147,7 +157,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree):
         opt.add_param_group({'params':ae.lin.parameters(),'lr':1e-3})
         ensemble_labels = torch.tensor(ensemble_labels,device='cuda')
         try:
-            assert len(ensemble_labels.unique()) == mid_centroids.shape[0]
+            #assert len(ensemble_labels.unique()) == mid_centroids.shape[0]
             assert len(ensemble_labels.unique()) == latent_centroids.shape[0]
         except: set_trace()
         for epoch in range(args.epochs):
@@ -162,7 +172,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree):
                 except Exception as e:print(e); set_trace()
                 targets = ensemble_labels[idx]
                 mask = all_agree[idx]
-                mid_centroid_targets = mid_centroids[targets]
+                #mid_centroid_targets = mid_centroids[targets]
                 latent_centroid_targets = latent_centroids[targets]
                 dec_mid,rpred = ae.dec(utils.noiseify(latent,args.noise))
                 rloss = loss_func(rpred,xb)
@@ -170,23 +180,19 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree):
                     loss = rloss.mean()
                 else:
                     cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
-                    #closs_ = mse_loss_func(latent[mask],latent_centroid_targets[mask,:,None,None]).mean(dim=1)
                     crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
-                    def get_gauss_loss(preds,centroids,targets):
-                        inverse_dists = mse_loss_func(preds,centroids).mean(dim=-1)**-1
-                        #inverse_dists = mse_loss_func(preds.squeeze(-1).transpose(1,2),centroids).mean(dim=-1)**(-1)
-                        inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
-                        return ce_loss_func(inverse_dists,targets)
-                    inverse_dists = mse_loss_func(latent[:,None,:,0,0],latent_centroids).mean(dim=-1)**-1
-                    inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
+                    #def get_gauss_loss(preds,centroids,targets):
+                    #    inverse_dists = mse_loss_func(preds,centroids).mean(dim=-1)**-1
+                    #    #inverse_dists = mse_loss_func(preds.squeeze(-1).transpose(1,2),centroids).mean(dim=-1)**(-1)
+                    #    inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
+                    #    return ce_loss_func(inverse_dists,targets)
+                    #inverse_dists = mse_loss_func(latent[:,None,:,0,0],latent_centroids).mean(dim=-1)**-1
+                    #inverse_dists /= inverse_dists.min(dim=-1,keepdim=True)[0]
                     #gauss_loss = ce_loss_func(inverse_dists,targets)
                     lin_pred = ae.lin(utils.noiseify(latent,args.noise)[:,:,0,0])
                     gauss_loss = ce_loss_func(lin_pred,targets).mean()
-                    #try: assert (gauss_loss == get_gauss_loss(latent.view(args.batch_size,1,-1),latent_centroids,targets)).all()
-                    #except: set_trace()
                     #mid_gauss_loss = get_gauss_loss(enc_mid.view(args.batch_size,1,-1),mid_centroids,targets)
                     #latent_gauss_loss = get_gauss_loss(latent.view(args.batch_size,1,-1),latent_centroids,targets)
-                    #latent_gauss_loss.register_hook(lambda grad: print(grad))
                     closs = 0.1*(crloss_).mean() + torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + 0.1*rloss.mean()
                     #closs = 0.1*crloss_.mean() + torch.clamp(closs_, min=args.clamp_gauss_loss).mean()
                     total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
@@ -230,7 +236,8 @@ def load_vecs(aeid):
 def load_labels(aeid):
     mid_labels = np.load(f'../labels/mid_labels{aeid}.npy')
     latent_labels = np.load(f'../labels/latent_labels{aeid}.npy')
-    return {'aeid': aeid, 'mid_labels': mid_labels, 'latent_labels': latent_labels}
+    umapped_latents = np.load(f'../umaps/latent_umaps{aeid}.npy')
+    return {'aeid': aeid, 'umapped_latents':umapped_latents,'mid_labels': mid_labels, 'latent_labels': latent_labels}
 
 def load_ensemble(aeids):
     centroids_by_id = {}
@@ -313,6 +320,9 @@ if __name__ == "__main__":
         with ctx.Pool(processes=20) as pool:
             print(f"Loading {len(aeids)} aes...")
             aes = [filled_load(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load, aeids)
+        x = aes[0]['ae'].enc.block2[-2][0].out_channels
+        try: assert all([a['ae'].enc.block2[-2][0].out_channels==ARGS.NZ for a in aes])
+        except: print('Mismatch between latent size of loaded aes, {x} and NZ argument\n'); sys.exit()
 
     if 2 in ARGS.sections:
         generate_start_time = time()
@@ -324,6 +334,7 @@ if __name__ == "__main__":
         with ctx.Pool(processes=20) as pool:
             print(f"Loading vecs for {len(aes)} aes...")
             vecs = [load_vecs(aeid) for aeid in aeids] if ARGS.single else pool.map(load_vecs, aeids)
+        assert all([v['latents'].shape[1] == ARGS.NZ for v in vecs])
 
     from sklearn.metrics import normalized_mutual_info_score as mi
     gt_labels = np.load('../labels/gt_labels.npy')
@@ -339,12 +350,15 @@ if __name__ == "__main__":
             labels = [load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(load_labels,aeids)
 
     if 4 in ARGS.sections:
+        scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+        concatted_umaps = np.concatenate([l['umapped_latents'] for l in labels])
+        concatted_labels = scanner.fit_predict(concatted_umaps)
         ensemble_build_start_time = time()
         vecs = utils.dictify_list(vecs,key='aeid')
         labels = utils.dictify_list(labels,key='aeid')
         vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}
         print(f"Building ensemble from {len(aes)} aes...")
-        centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels)
+        centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=concatted_labels,given_gt=concatted_labels)
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
     elif 5 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
@@ -378,19 +392,30 @@ if __name__ == "__main__":
             with ctx.Pool(processes=20) as pool:
                 print(f"Generating labels for {len(aes)} aes...")
                 labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+            scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+            concatted_umaps = np.concatenate([l['umapped_latents'] for l in labels])
+            concatted_labels = scanner.fit_predict(concatted_umaps)
+
+            concatted_vecs = np.concatenate([v['latents'] for v in vecs])
+            umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+            concatted_labels2 = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}
             print(f"Building ensemble from {len(aes)} aes...")
-            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels)
+            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=concatted_labels,given_gt=concatted_labels)
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
+
+            #difficult_list = sorted([l for l in set(best_labels)], key=lambda x: (best_labels[~all_agree]==x).sum()/(best_labels==x).sum())
             print('AE Scores:')
-            print('Mid Acc:', [utils.accuracy(labels[x]['mid_labels'],gt_labels) for x in aeids if x in centroids_by_id.keys()])
-            print('Mid MIs:',[mi(labels[x]['mid_labels'],gt_labels) for x in aeids if x in centroids_by_id.keys()])
+            #print('Mid Acc:', [utils.accuracy(labels[x]['mid_labels'],gt_labels) for x in aeids if x in centroids_by_id.keys()])
+            #print('Mid MIs:',[mi(labels[x]['mid_labels'],gt_labels) for x in aeids if x in centroids_by_id.keys()])
             print('L acc',[utils.accuracy(labels[x]['latent_labels'],gt_labels) for x in aeids if x in centroids_by_id.keys()])
             print('Latent MIs:',[mi(labels[x]['latent_labels'],gt_labels) for x in aeids if x in centroids_by_id.keys()])
             print('Ensemble Scores:')
             print('Acc:', utils.accuracy(ensemble_labels,gt_labels))
+            print('Concat Acc:', utils.accuracy(concatted_labels,gt_labels))
+            print('Concat2 Acc:', utils.accuracy(concatted_labels2,gt_labels))
             print('Acc agree:', utils.accuracy(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi(ensemble_labels,gt_labels))
             print('NMI agree:',mi(ensemble_labels[all_agree],gt_labels[all_agree]))
