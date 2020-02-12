@@ -438,7 +438,6 @@ def translate_labellings(trans_from_labels,trans_to_labels):
     try:
         if max(trans_from_labels) != max(trans_to_labels):
             print('Different numbers of labels, shouldn\'nt be comparing')
-            set_trace()
     except: set_trace()
     cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
