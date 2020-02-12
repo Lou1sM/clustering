@@ -60,8 +60,9 @@ def generate_vecs_single(ae_dict,args):
                 mids = mid if i==0 else np.concatenate([mids,mid],axis=0)
                 latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
                 latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
-            np.save(f'../vecs/mids{ae.identifier}.npy',mids)
-            np.save(f'../vecs/latents{ae.identifier}.npy',latents)
+            if args.save:
+                np.save(f'../vecs/mids{ae.identifier}.npy',mids)
+                np.save(f'../vecs/latents{ae.identifier}.npy',latents)
     return {'aeid':aeid,'mids':mids,'latents':latents}
 
 def label_single(ae_output,args):
@@ -90,17 +91,17 @@ def label_single(ae_output,args):
     #return {'aeid':aeid,'umapped_mids':umapped_mids,'umapped_latents':umapped_latents,'mid_labels':mid_labels,'latent_labels':latent_labels}
     return {'aeid':aeid,'umapped_latents':umapped_latents,'latent_labels':latent_labels}
 
-def build_ensemble(vecs_and_labels,args,pivot,given_gt):
+def build_ensemble(vecs_and_labels,args,given_gt):
     #nums_labels = [utils.get_num_labels(ae_results[ctype]) for ae_results in vecs_and_labels.values() for ctype in ['mid_labels','latent_labels']]
     nums_labels = [utils.get_num_labels(ae_results['latent_labels']) for ae_results in vecs_and_labels.values()]
     print(nums_labels)
     counts = {x:nums_labels.count(x) for x in set(nums_labels)}
     ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[-1]
-    assert ensemble_num_labels == utils.get_num_labels(given_gt)
+    assert given_gt is None or (ensemble_num_labels == utils.get_num_labels(given_gt))
     #usable_mid_labels = {aeid:result['mid_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['mid_labels']) == ensemble_num_labels}
     usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['latent_labels']) == ensemble_num_labels}
     #same_lang_labels = utils.debable(list(usable_mid_labels.values())+list(usable_latent_labels.values()),pivot=pivot)
-    same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=pivot)
+    same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=given_gt)
     multihots = utils.ask_ensemble(np.stack(same_lang_labels))
     #all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==(len(usable_mid_labels) + len(usable_latent_labels)))
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_latent_labels))
@@ -327,9 +328,10 @@ if __name__ == "__main__":
     if 2 in ARGS.sections:
         generate_start_time = time()
         with ctx.Pool(processes=20) as pool:
-            print(f"Generating vecs for {len(aes)} aes...")
-            vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
-        print(f'Generation time: {utils.asMinutes(time()-generate_start_time)}')
+            with torch.cuda.device(device):
+                print(f"Generating vecs for {len(aes)} aes...")
+                vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
+            print(f'Generation time: {utils.asMinutes(time()-generate_start_time)}')
     elif 3 in ARGS.sections or 4 in ARGS.sections:
         with ctx.Pool(processes=20) as pool:
             print(f"Loading vecs for {len(aes)} aes...")
@@ -351,14 +353,21 @@ if __name__ == "__main__":
 
     if 4 in ARGS.sections:
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-        concatted_umaps = np.concatenate([l['umapped_latents'] for l in labels])
-        concatted_labels = scanner.fit_predict(concatted_umaps)
+        concatted_vecs = np.concatenate([v['latents'] for v in vecs])
+        concat_umap_start_time = time()
+        print('Umapping concatted vecs...')
+        umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+        print(f'Umap concat time: {utils.asMinutes(time()-concat_umap_start_time)}')
+        concat_scan_start_time = time()
+        print('Scanning umapped concatted vecs...')
+        concatted_labels = scanner.fit_predict(umapped_concats)
+        print(f'Concat scan time: {utils.asMinutes(time()-concat_scan_start_time)}')
         ensemble_build_start_time = time()
         vecs = utils.dictify_list(vecs,key='aeid')
         labels = utils.dictify_list(labels,key='aeid')
         vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}
         print(f"Building ensemble from {len(aes)} aes...")
-        centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=concatted_labels,given_gt=concatted_labels)
+        centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,given_gt=None)
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
     elif 5 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
@@ -393,17 +402,15 @@ if __name__ == "__main__":
                 print(f"Generating labels for {len(aes)} aes...")
                 labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
             scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-            concatted_umaps = np.concatenate([l['umapped_latents'] for l in labels])
-            concatted_labels = scanner.fit_predict(concatted_umaps)
 
             concatted_vecs = np.concatenate([v['latents'] for v in vecs])
             umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
-            concatted_labels2 = scanner.fit_predict(umapped_concats)
+            concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}
             print(f"Building ensemble from {len(aes)} aes...")
-            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=concatted_labels,given_gt=concatted_labels)
+            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,given_gt=None)
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
 
             #difficult_list = sorted([l for l in set(best_labels)], key=lambda x: (best_labels[~all_agree]==x).sum()/(best_labels==x).sum())
