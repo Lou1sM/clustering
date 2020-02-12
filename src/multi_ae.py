@@ -417,7 +417,7 @@ if __name__ == "__main__":
             #difficult_list = sorted([l for l in set(best_labels)], key=lambda x: (best_labels[~all_agree]==x).sum()/(best_labels==x).sum())
             print('AE Scores:')
             print('L acc', [utils.accuracy(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
-            print('L acc', [mi(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
+            print('L MI', [mi(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
             print('Ensemble Scores:')
             print('Acc:', utils.accuracy(ensemble_labels,gt_labels))
             print('Concat Acc:', utils.accuracy(concatted_labels,gt_labels))
