@@ -436,8 +436,10 @@ def label_assignment_cost(labels1,labels2,label1,label2):
 def translate_labellings(trans_from_labels,trans_to_labels):
     # What you're translating into has to be compressed, otherwise gives wrong results
     try:
-        if max(trans_from_labels) != max(trans_to_labels):
-            print('Different numbers of labels, shouldn\'nt be comparing')
+        num_from_labs =  len(set(trans_from_labels)) if isinstance(trans_from_labels,np.ndarray) else len(trans_from_labels.unique())
+        num_to_labs =  len(set(trans_to_labels)) if isinstance(trans_to_labels,np.ndarray) else len(trans_to_labels.unique()) 
+        if num_from_labs != num_to_labs:
+            print(f'Different numbers of labels {num_from_labs} and {num_to_labs}, should\'nt be comparing')
     except: set_trace()
     cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
@@ -493,3 +495,10 @@ def dictify_list(x,key):
 def accuracy(labels1,labels2):
     trans_labels = translate_labellings(labels1,labels2)
     return sum(trans_labels==labels2)/len(labels1)
+
+def compress_labels(labels):
+    if isinstance(labels,torch.Tensor): labels = labels.detach().cpu().numpy()
+    x = sorted([i for i in set(labels) if i != -1])
+    new_labels = np.array([l if l == -1 else x.index(l) for l in labels])
+    return new_labels
+
