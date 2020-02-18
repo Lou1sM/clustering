@@ -45,7 +45,7 @@ def generate_vecs_single(ae_dict,args):
     else:
         device = torch.device(f'cuda:{args.gpu}')
         with torch.cuda.device(device):
-            dset = utils.get_mnist_dset() if args.dset == 'mnist' else utils.get_fashionmnist_dset()
+            dset = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
             ae.to(device)
             determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
             for i, (xb,yb,idx) in enumerate(determin_dl):
@@ -121,7 +121,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
         centroids_dict = centroids_by_id[aeid]
         latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
 
-        DATASET = utils.get_mnist_dset() if args.dset == 'mnist' else utils.get_fashionmnist_dset()
+        DATASET = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(DATASET,batch_sampler=data.BatchSampler(data.RandomSampler(DATASET),args.batch_size,drop_last=True),pin_memory=False)
         loss_func=nn.L1Loss(reduction='none')
         ce_loss_func = nn.CrossEntropyLoss(reduction='none')
