@@ -34,6 +34,7 @@ __init__	./utils.py	/^    def __init__(self,transforms,device,**kwdata):$/;"	m	c
 __len__	./utils.py	/^    def __len__(self): return len(getattr(self,self.data_names[0]))$/;"	m	class:KwargTransformDataset
 __len__	./utils.py	/^    def __len__(self): return len(self.data) if self.x_only else len(self.x)$/;"	m	class:TransformDataset
 _comp	./utils.py	/^    def _comp(x):$/;"	f	function:compose	file:
+acc	./multi_ae.py	/^            acc = utils.accuracy(ensemble_labels,gt_labels)$/;"	v
 accuracy	./utils.py	/^def accuracy(labels1,labels2):$/;"	f
 add_colour_dimension	./utils.py	/^def add_colour_dimension(item): return item.unsqueeze(0) if item.dim() == 2 else item.unsqueeze(/;"	f
 aeids	./min_ex.py	/^    aeids = ARGS.aeids if ARGS.aeids is not None else range(ARGS.num_aes)$/;"	v
@@ -45,6 +46,7 @@ aes	./min_ex.py	/^            aes = [load_ae(aeid) for aeid in aeids] if ARGS.si
 aes	./multi_ae.py	/^            aes = [filled_load(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load/;"	v
 aes	./multi_ae.py	/^            aes = copied_aes$/;"	v
 aes	./multi_ae.py	/^        aes = []$/;"	v
+afters	./multi_ae.py	/^                afters = [p.detach().cpu() for aedit in copied_aes for p in aedict['ae'].paramet/;"	v
 all_agree	./min_ex.py	/^                centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels)$/;"	v
 all_agree	./min_ex.py	/^            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels)$/;"	v
 all_agree	./min_ex.py	/^            centroids_by_id, ensemble_labels, all_agree  = load_ensemble(aeids)$/;"	v
@@ -54,8 +56,10 @@ all_agree	./multi_ae.py	/^        centroids_by_id, ensemble_labels, all_agree = 
 arrays_to_save	./multi_ae.py	/^            arrays_to_save = {k:v for k,v in by_aeid[aeid].items() if k!='aeid'}$/;"	v
 asMinutes	./utils.py	/^def asMinutes(s):$/;"	f
 ask_ensemble	./utils.py	/^def ask_ensemble(l): return (np.expand_dims(np.arange(l.max()+1),0)==np.expand_dims(l,2)).sum(ax/;"	f
+befores	./multi_ae.py	/^                befores = [p.detach().cpu() for aedit in copied_aes for p in aedict['ae'].parame/;"	v
+best_acc	./multi_ae.py	/^        best_acc = 0.$/;"	v
 build_ensemble	./min_ex.py	/^def build_ensemble(vecs_and_labels):$/;"	f
-build_ensemble	./multi_ae.py	/^def build_ensemble(vecs_and_labels,args,pivot):$/;"	f
+build_ensemble	./multi_ae.py	/^def build_ensemble(vecs_and_labels,args,pivot,given_gt):$/;"	f
 by_aeid	./multi_ae.py	/^        by_aeid = {aeid:{**vecs_and_labels[aeid],**centroids_by_id[aeid]} for aeid in aeids}$/;"	v
 centroids_by_id	./min_ex.py	/^                centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels)$/;"	v
 centroids_by_id	./min_ex.py	/^            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels)$/;"	v
@@ -69,9 +73,17 @@ check_latents	./utils.py	/^def check_latents(dec,latents,show,stacked):$/;"	f
 check_ohe_latents	./utils.py	/^def check_ohe_latents(dec,t):$/;"	f
 cm	./utils.py	/^import matplotlib.cm as cm$/;"	I
 compose	./utils.py	/^def compose(funcs):$/;"	f
-concatted_labels	./multi_ae.py	/^        concatted_labels = scanner.fit_predict(concatted_umaps)$/;"	v
-concatted_umaps	./multi_ae.py	/^        concatted_umaps = np.concatenate([l['umapped_latents'] for l in labels])$/;"	v
+compress_labels	./utils.py	/^def compress_labels(labels):$/;"	f
+concat_acc	./multi_ae.py	/^            concat_acc = utils.accuracy(concatted_labels,gt_labels)$/;"	v
+concat_scan_start_time	./multi_ae.py	/^            concat_scan_start_time = time()$/;"	v
+concat_umap_start_time	./multi_ae.py	/^        concat_umap_start_time = time()$/;"	v
+concatted_labels	./multi_ae.py	/^            concatted_labels = scanner.fit_predict(umapped_concats)$/;"	v
+concatted_labels	./multi_ae.py	/^        concatted_labels = np.load('..\/labels\/concatted_labels.npy')$/;"	v
+concatted_vecs	./multi_ae.py	/^            concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)$/;"	v
+concatted_vecs	./multi_ae.py	/^        concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)$/;"	v
 copied_aes	./multi_ae.py	/^            copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid'/;"	v
+count	./multi_ae.py	/^                count = 0$/;"	v
+count	./multi_ae.py	/^        count = 0$/;"	v
 ctx	./min_ex.py	/^    ctx = mp.get_context("spawn")$/;"	v
 ctx	./multi_ae.py	/^    ctx = mp.get_context("spawn")$/;"	v
 debable	./utils.py	/^def debable(labellings_list,pivot):$/;"	f
@@ -82,6 +94,7 @@ device	./multi_ae.py	/^    device = torch.device(f'cuda:{ARGS.gpu}')$/;"	v
 device	./utils.py	/^    def device(self):$/;"	m	class:AE
 device	./utils.py	/^    def device(self):$/;"	m	class:EncoderStacked
 dictify_list	./utils.py	/^def dictify_list(x,key):$/;"	f
+difficult_list	./multi_ae.py	/^            difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(concatted_labels) /;"	v
 duplicate_dim	./utils.py	/^def duplicate_dim(enc,dec,lin,idx):$/;"	f
 enc	./min_ex.py	/^                enc = utils.EncoderStacked(enc_b1,enc_b2)$/;"	v
 enc_b1	./min_ex.py	/^                enc_b1, enc_b2 = utils.get_enc_blocks('cuda',ARGS.NZ)$/;"	v
@@ -96,7 +109,7 @@ ensemble_labels	./min_ex.py	/^            centroids_by_id, ensemble_labels, all_
 ensemble_labels	./multi_ae.py	/^            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,p/;"	v
 ensemble_labels	./multi_ae.py	/^        centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=/;"	v
 ensemble_labels	./multi_ae.py	/^        centroids_by_id, ensemble_labels, all_agree = load_ensemble(aeids)$/;"	v
-except	./multi_ae.py	/^                    except:aedict['ae'].lin = nn.Linear(ARGS.NZ,len(set(ensemble_labels))).to(de/;"	v
+except	./multi_ae.py	/^                    except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)$/;"	v
 exp_outputs	./multi_ae.py	/^        exp_outputs = {'ensemble_labels': ensemble_labels,'all_agree':all_agree,'by_aeid':by_aei/;"	v
 filled_generate	./min_ex.py	/^            filled_generate = partial(generate_vecs_single,test=ARGS.test)$/;"	v
 filled_generate	./multi_ae.py	/^    filled_generate = partial(generate_vecs_single,args=ARGS)$/;"	v
@@ -125,6 +138,7 @@ get_dset	./utils.py	/^def get_dset(raw_data,x_only,device,tfms=None):$/;"	f
 get_enc_blocks	./utils.py	/^def get_enc_blocks(device, latent_size):$/;"	f
 get_enc_dec	./utils.py	/^def get_enc_dec(device, latent_size):$/;"	f
 get_far_tensor	./utils.py	/^def get_far_tensor(exemplars_tensor):$/;"	f
+get_fashionmnist_dset	./utils.py	/^def get_fashionmnist_dset(device='cuda',x_only=False):$/;"	f
 get_mnist_dloader	./utils.py	/^def get_mnist_dloader(x_only=False,device='cuda',bs=64):$/;"	f
 get_mnist_dset	./utils.py	/^def get_mnist_dset(device='cuda',x_only=False):$/;"	f
 get_num_labels	./utils.py	/^def get_num_labels(labels):$/;"	f
@@ -156,9 +170,12 @@ load_labels	./multi_ae.py	/^def load_labels(aeid):$/;"	f
 load_vecs	./min_ex.py	/^def load_vecs(aeid):$/;"	f
 load_vecs	./multi_ae.py	/^def load_vecs(aeid):$/;"	f
 make_ae	./utils.py	/^def make_ae(aeid,device,NZ):$/;"	f
+meta_epoch_start_time	./multi_ae.py	/^            meta_epoch_start_time = time()$/;"	v
 mi	./multi_ae.py	/^    from sklearn.metrics import normalized_mutual_info_score as mi$/;"	x
+mlp	./utils.py	/^def mlp(inp_size,hidden_size,outp_size,device):$/;"	f
 mp	./min_ex.py	/^    import multiprocessing as mp$/;"	I
 mp	./multi_ae.py	/^    import multiprocessing as mp$/;"	I
+new_best_acc	./multi_ae.py	/^            new_best_acc = max(acc,concat_acc)$/;"	v
 nn	./min_ex.py	/^import torch.nn as nn$/;"	I
 nn	./multi_ae.py	/^import torch.nn as nn$/;"	I
 nn	./utils.py	/^import torch.nn as nn$/;"	I
@@ -168,6 +185,7 @@ normalize_leaf	./utils.py	/^def normalize_leaf(t): return torch.tensor(t.data)\/
 np	./min_ex.py	/^import numpy as np$/;"	I
 np	./multi_ae.py	/^import numpy as np$/;"	I
 np	./utils.py	/^import numpy as np$/;"	I
+num_labels	./multi_ae.py	/^                num_labels = len(set(ensemble_labels))$/;"	v
 numpyify	./utils.py	/^def numpyify(x):$/;"	f
 oheify	./utils.py	/^def oheify(x):$/;"	f
 parser	./min_ex.py	/^    parser = argparse.ArgumentParser()$/;"	v
@@ -184,6 +202,7 @@ prune	./utils.py	/^def prune(enc,dec,lin,idx):$/;"	f
 reload	./utils.py	/^def reload():$/;"	f
 safemean	./utils.py	/^def safemean(t): return 0 if t.numel() == 0 else t.mean()$/;"	f
 save_and_check	./utils.py	/^def save_and_check(enc,dec,fname):$/;"	f
+scanner	./multi_ae.py	/^            scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)$/;"	v
 scanner	./multi_ae.py	/^        scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)$/;"	v
 scatter_clusters	./utils.py	/^def scatter_clusters(embeddings,labels,show):$/;"	f
 set_experiment_dir	./utils.py	/^def set_experiment_dir(exp_name, overwrite):$/;"	f
@@ -196,7 +215,7 @@ tdatasets	./utils.py	/^import torchvision.datasets as tdatasets$/;"	I
 test_mods_eq	./utils.py	/^def test_mods_eq(m1,m2):$/;"	f
 to_float_tensor	./utils.py	/^def to_float_tensor(item): return item.float().div_(255.)$/;"	f
 train_ae	./min_ex.py	/^def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree):$/;"	f
-train_ae	./multi_ae.py	/^def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree):$/;"	f
+train_ae	./multi_ae.py	/^def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):$/;"	f
 train_start_time	./min_ex.py	/^            train_start_time = time()$/;"	v
 train_start_time	./multi_ae.py	/^        train_start_time = time()$/;"	v
 translate_labellings	./utils.py	/^def translate_labellings(trans_from_labels,trans_to_labels):$/;"	f
@@ -204,6 +223,7 @@ umap	./min_ex.py	/^import umap.umap_ as umap$/;"	I
 umap	./multi_ae.py	/^import umap.umap_ as umap$/;"	I
 umap	./utils.py	/^import umap.umap_ as umap$/;"	I
 umap_embed	./utils.py	/^def umap_embed(vectors,**config): return umap.UMAP(random_state=42).fit_transform(vectors,**conf/;"	f
+umapped_concats	./multi_ae.py	/^            umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform/;"	v
 vecs	./min_ex.py	/^                vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_g/;"	v
 vecs	./min_ex.py	/^            vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_gener/;"	v
 vecs	./min_ex.py	/^            vecs = [load_vecs(aeid) for aeid in aeids] if ARGS.single else pool.map(load_vecs, a/;"	v
@@ -217,3 +237,4 @@ vecs_and_labels	./min_ex.py	/^            vecs_and_labels = {aeid:{**vecs[aeid],
 vecs_and_labels	./multi_ae.py	/^            vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}$/;"	v
 vecs_and_labels	./multi_ae.py	/^        vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}$/;"	v
 vis_latent	./utils.py	/^def vis_latent(dec,latent): plt.imshow(dec(latent[None,:,None,None].cuda())[0,0]); plt.show()$/;"	f
+worst3	./multi_ae.py	/^            worst3 = difficult_list[:3]$/;"	v

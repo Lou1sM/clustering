@@ -314,10 +314,16 @@ def get_mnist_dloader(x_only=False,device='cuda',bs=64):
     return mnist_dl
 
 def get_mnist_dset(device='cuda',x_only=False):
-    mnist_data=tdatasets.MNIST(root='~/unsupervised_object_learning/data/',train=True,download=True)
+    mnist_data=tdatasets.MNIST(root='~/unsupervised_object_learning/MNIST/data',train=True,download=True)
     data = mnist_data.train_data if x_only else mnist_data
     mnist_dataset = TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
     return mnist_dataset
+
+def get_fashionmnist_dset(device='cuda',x_only=False):
+    fashionmnist_data=tdatasets.FashionMNIST(root='~/unsupervised_object_learning/FashionMNIST/data',train=True,download=True)
+    data = fashionmnist_data.train_data if x_only else fashionmnist_data
+    fashionmnist_dataset = TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
+    return fashionmnist_dataset
 
 def get_dloader(raw_data,x_only,batch_size,device,random=True):
     ds = get_dset(raw_data,x_only,device=device)
@@ -436,8 +442,10 @@ def label_assignment_cost(labels1,labels2,label1,label2):
 def translate_labellings(trans_from_labels,trans_to_labels):
     # What you're translating into has to be compressed, otherwise gives wrong results
     try:
-        num_from_labs =  len(set(trans_from_labels)) if isinstance(trans_from_labels,np.ndarray) else len(trans_from_labels.unique())
-        num_to_labs =  len(set(trans_to_labels)) if isinstance(trans_to_labels,np.ndarray) else len(trans_to_labels.unique()) 
+        unique_from_labs =  set(trans_from_labels) if isinstance(trans_from_labels,np.ndarray) else trans_from_labels.unique()
+        unique_to_labs =  set(trans_to_labels) if isinstance(trans_to_labels,np.ndarray) else trans_to_labels.unique()
+        num_from_labs =  len([i for i in unique_from_labs if i != -1])
+        num_to_labs =  len([i for i in unique_to_labs if i != -1])
         if num_from_labs != num_to_labs:
             print(f'Different numbers of labels {num_from_labs} and {num_to_labs}, should\'nt be comparing')
     except: set_trace()
@@ -502,3 +510,11 @@ def compress_labels(labels):
     new_labels = np.array([l if l == -1 else x.index(l) for l in labels])
     return new_labels
 
+def mlp(inp_size,hidden_size,outp_size,device):
+    l1 = nn.Linear(inp_size,hidden_size)
+    l2 = nn.ReLU()
+    l3 = nn.Linear(hidden_size,outp_size)
+    return nn.Sequential(l1,l2,l3).to(device)
+
+def num_labs(labels): return len(set([l for l in labels if l != -1]))
+def same_num_labs(labels1,labels2): num_labs(labels1) == num_labs(labels2)
