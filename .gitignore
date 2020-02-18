@@ -2,8 +2,8 @@ runs/**
 .ipynb_checkpoints/**
 __pycache__/**
 *.swp*
-data/**
 **/__pycache__/**
 **/runs/**
-experiments/**
-checkpoints/**
+MNIST/**
+FashionMNIST/**
+dev/**
