@@ -19,14 +19,13 @@ def pretrain_ae(ae_dict,args):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid,ae = ae_dict['aeid'],ae_dict['ae']
-        dset = utils.get_mnist_dset() if args.dset == 'mnist' else utils.get_fashionmnist_dset()
+        dset = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
         loss_func=nn.L1Loss(reduction='none')
         opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
         opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
         for epoch in range(args.pretrain_epochs):
             total_loss = 0.
-            print(f'Pretraining ae {aeid}, epoch {epoch}')
             for i,(xb,yb,idx) in enumerate(dl):
                 enc_mid, latent = ae.enc(xb)
                 dec_mid, pred = ae.dec(utils.noiseify(latent,args.noise))
@@ -35,7 +34,7 @@ def pretrain_ae(ae_dict,args):
                 total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
                 if args.test: break
             if args.test: break
-            print(f'AE: {aeid}, Epoch: {epoch}, Loss {total_loss}')
+            print(f'Pretraining AE {aeid}, Epoch: {epoch}, Loss {total_loss}')
     if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/pt{aeid}.pt')
     return np.array([dset[i][1] for i in range(len(dset))])
 
@@ -62,7 +61,7 @@ def label_single(ae_output,args):
     if args.test:
         print('Skipping umap and hdbscan')
         latent_labels = np.load(f'../{args.dset}/labels/latent_labels{aeid}.npy')
-        umapped_latents = np.load(f'../{args.dset}/umaps/latent_umaps{aeid}.npy')
+        umapped_latents = None
     else:
         print('Umapping latents...')
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
@@ -76,9 +75,9 @@ def label_single(ae_output,args):
 
 def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     nums_labels = [utils.get_num_labels(ae_results['latent_labels']) for ae_results in vecs_and_labels.values()]
-    print(nums_labels)
     counts = {x:nums_labels.count(x) for x in set(nums_labels)}
     ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[-1]
+    print(f'All nums labels: {nums_labels}, ensemble num labels: {ensemble_num_labels}')
     assert given_gt is None or ensemble_num_labels == utils.get_num_labels(given_gt)
     usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['latent_labels']) == ensemble_num_labels}
     if ensemble_num_labels == utils.num_labs(pivot):
@@ -94,8 +93,9 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         print(aeid, 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['latent_labels']))
     for aeid in set(usable_latent_labels.keys()):
         new_centroid_info={'aeid':aeid}
-        if  not any([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
+        if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             print('No all agree vecs for centroids')
+            print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
             continue
         latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
         try:
@@ -117,7 +117,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
         if aeid not in centroids_by_id.keys():
             print(aeid, ', you must be new here')
             pretrain_ae(ae_dict,args=args)
-            return
+            return aeid
         centroids_dict = centroids_by_id[aeid]
         latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
 
@@ -201,7 +201,6 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
             print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
             if epoch_loss < 0.02: break
         if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
-
     print('Finished epochs for ae', aeid)
 
 def load_ae(aeid,args):
@@ -216,7 +215,7 @@ def load_vecs(aeid,args):
 
 def load_labels(aeid,args):
     latent_labels = np.load(f'../{args.dset}/labels/latent_labels{aeid}.npy')
-    umapped_latents = np.load(f'../{args.dset}/umaps/latent_umaps{aeid}.npy')
+    umapped_latents = None
     return {'aeid': aeid, 'umapped_latents':umapped_latents, 'latent_labels': latent_labels}
 
 def load_ensemble(aeids,args):
@@ -244,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument('--enc_lr',type=float,default=1e-3)
     parser.add_argument('--epochs',type=int,default=8)
     parser.add_argument('--exp_name',type=str,default='try')
-    parser.add_argument('--gen_batch_size',type=int,default=500)
+    parser.add_argument('--gen_batch_size',type=int,default=100)
     parser.add_argument('--gpu',type=str,default='0')
     parser.add_argument('--inter_epochs',type=int,default=8)
     parser.add_argument('--max_meta_epochs',type=int,default=30)
@@ -266,6 +265,7 @@ if __name__ == "__main__":
     if ARGS.test and ARGS.save:
         print("shouldn't be saving for a test run")
         sys.exit()
+    if ARGS.test and ARGS.max_meta_epochs == 30: ARGS.max_meta_epochs = 2
     global LOAD_START_TIME; LOAD_START_TIME = time()
     torch.manual_seed(ARGS.seed)
     np.random.seed(ARGS.seed)
@@ -347,6 +347,7 @@ if __name__ == "__main__":
         concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
         concat_umap_start_time = time()
         if ARGS.test: concat_labels = labels[0]['latent_labels']
+        elif len(labels) == 1: concatted_labels = labels[0]['latent_labels']
         else:
             print('Umapping concatted vecs...')
             umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
@@ -394,12 +395,13 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-                befores = [p.detach().cpu() for aedit in copied_aes for p in aedict['ae'].parameters()]
+                befores = {aedict['aeid']: [p.detach().cpu() for p in aedict['ae'].parameters()] for aedict in copied_aes}
                 filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,ensemble_labels=ensemble_labels,all_agree=all_agree,worst3=worst3)
-                [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
-                afters = [p.detach().cpu() for aedit in copied_aes for p in aedict['ae'].parameters()]
-                for b,a in zip(befores,afters):
-                    assert(not (b==a).all())
+                discardeds = [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
+                afters = {aedict['aeid']: [p.detach().cpu() for p in aedict['ae'].parameters()] for aedict in copied_aes}
+                for discarded in [d for d in discardeds if d is not None]:
+                    for b,a in zip(befores[discarded],afters[discarded]):
+                        assert(not (b==a).all())
             aes = copied_aes
             assert set([ae['aeid'] for ae in aes]) == set(aeids)
             with ctx.Pool(processes=20) as pool:
@@ -408,10 +410,12 @@ if __name__ == "__main__":
             with ctx.Pool(processes=20) as pool:
                 print(f"Generating labels for {len(aes)} aes...")
                 labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
-            scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-            concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-            umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
-            concatted_labels = scanner.fit_predict(umapped_concats)
+            if len(labels) == 1: concatted_labels = labels[0]['latent_labels']
+            else:
+                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+                concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
+                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+                concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}

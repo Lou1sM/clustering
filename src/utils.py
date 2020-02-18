@@ -17,6 +17,7 @@ import umap.umap_ as umap
 from sklearn.datasets import fetch_mldata
 import seaborn as sns
 from torch.utils import data
+from sklearn.metrics import adjusted_rand_score
 
 
 def reload():
@@ -501,8 +502,12 @@ def dictify_list(x,key):
     return {item[key]: item for item in x}
 
 def accuracy(labels1,labels2):
-    trans_labels = translate_labellings(labels1,labels2)
-    return sum(trans_labels==labels2)/len(labels1)
+    try:
+        trans_labels = translate_labellings(labels1,labels2)
+        return sum(trans_labels==labels2)/len(labels1)
+    except:
+        print("Couldn't compute accuracy by translating, returning adjusted_rand_score instead")
+        return adjusted_rand_score(labels1,labels2)
 
 def compress_labels(labels):
     if isinstance(labels,torch.Tensor): labels = labels.detach().cpu().numpy()
