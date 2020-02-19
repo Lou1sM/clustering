@@ -80,7 +80,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     print(f'All nums labels: {nums_labels}, ensemble num labels: {ensemble_num_labels}')
     assert given_gt is None or ensemble_num_labels == utils.get_num_labels(given_gt)
     usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['latent_labels']) == ensemble_num_labels}
-    if ensemble_num_labels == utils.num_labs(pivot):
+    if pivot is not None and ensemble_num_labels == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=pivot)
     else:
         same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=None)
@@ -420,7 +420,7 @@ if __name__ == "__main__":
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}
             print(f"Building ensemble from {len(aes)} aes...")
-            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
+            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=None,given_gt=None)
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
 
             acc = utils.accuracy(ensemble_labels,gt_labels)
@@ -442,12 +442,14 @@ if __name__ == "__main__":
             else:
                 best_acc = new_best_acc
                 count = 0
+                best_ensemble_labels = ensemble_labels
+                best_all_agree = all_agree
             print('Best acc:', best_acc)
             print('Count:',count)
             if count == ARGS.patience: break
 
         ensemble_fname = f'../{ARGS.dset}/experiments/{ARGS.exp_name}_ensemble.json'
-        np.savez(ensemble_fname,ensemble_labels=ensemble_labels,all_agree=all_agree)
+        np.savez(ensemble_fname,ensemble_labels=best_ensemble_labels,all_agree=best_all_agree)
         by_aeid = {aeid:{**vecs_and_labels[aeid],**centroids_by_id[aeid]} for aeid in aeids}
         for aeid,v in by_aeid.items():
             fname = f'../{ARGS.dset}/experiments/{ARGS.exp_name}_aeid{aeid}_centroids.json'
