@@ -15,10 +15,11 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-def pretrain_ae(ae_dict,args):
+def pretrain_ae(ae_dict,args,should_change):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid,ae = ae_dict['aeid'],ae_dict['ae']
+        befores = [p.detach().cpu() for p in ae.parameters()]
         dset = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
         loss_func=nn.L1Loss(reduction='none')
@@ -35,6 +36,9 @@ def pretrain_ae(ae_dict,args):
                 if args.test: break
             if args.test: break
             print(f'Pretraining AE {aeid}, Epoch: {epoch}, Loss {total_loss}')
+        if should_change:
+            afters = [p.detach().cpu() for p in ae.parameters()]
+            for b,a in zip(befores,afters): assert not (b==a).all()
     if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/pt{aeid}.pt')
     return np.array([dset[i][1] for i in range(len(dset))])
 
@@ -114,9 +118,10 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
+        befores = [p.detach().cpu() for p in ae.parameters()]
         if aeid not in centroids_by_id.keys():
             print(aeid, ', you must be new here')
-            pretrain_ae(ae_dict,args=args)
+            pretrain_ae(ae_dict,args=args,should_change=False)
             return aeid
         centroids_dict = centroids_by_id[aeid]
         latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
@@ -200,6 +205,8 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
             if args.test: break
             print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
             if epoch_loss < 0.02: break
+        afters = [p.detach().cpu() for p in ae.parameters()]
+        for b,a in zip(befores,afters): assert not (b==a).all()
         if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
     print('Finished epochs for ae', aeid)
 
@@ -283,7 +290,7 @@ if __name__ == "__main__":
         aeids = range(ARGS.ae_range[0],ARGS.ae_range[1])
     ctx = mp.get_context("spawn")
 
-    filled_pretrain = partial(pretrain_ae,args=ARGS)
+    filled_pretrain = partial(pretrain_ae,args=ARGS,should_change=True)
     filled_generate = partial(generate_vecs_single,args=ARGS)
     filled_label = partial(label_single,args=ARGS)
     filled_load_ae = partial(load_ae,args=ARGS)
@@ -395,13 +402,8 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-                befores = {aedict['aeid']: [p.detach().cpu() for p in aedict['ae'].parameters()] for aedict in copied_aes}
                 filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,ensemble_labels=ensemble_labels,all_agree=all_agree,worst3=worst3)
                 discardeds = [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
-                afters = {aedict['aeid']: [p.detach().cpu() for p in aedict['ae'].parameters()] for aedict in copied_aes}
-                for discarded in [d for d in discardeds if d is not None]:
-                    for b,a in zip(befores[discarded],afters[discarded]):
-                        assert(not (b==a).all())
             aes = copied_aes
             assert set([ae['aeid'] for ae in aes]) == set(aeids)
             with ctx.Pool(processes=20) as pool:
