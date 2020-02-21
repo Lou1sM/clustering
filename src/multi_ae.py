@@ -35,7 +35,7 @@ def pretrain_ae(ae_dict,args,should_change):
                 total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
                 if args.test: break
             if args.test: break
-            print(f'Pretraining AE {aeid}, Epoch: {epoch}, Loss {total_loss}')
+            print(f'Pretraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
         if should_change:
             afters = [p.detach().cpu() for p in ae.parameters()]
             for b,a in zip(befores,afters): assert not (b==a).all()
@@ -367,7 +367,7 @@ if __name__ == "__main__":
         ensemble_build_start_time = time()
         vecs = utils.dictify_list(vecs,key='aeid')
         labels = utils.dictify_list(labels,key='aeid')
-        vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}
+        vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
         print(f"Building ensemble from {len(aes)} aes...")
         centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
@@ -420,7 +420,7 @@ if __name__ == "__main__":
                 concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
-            vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in aeids}
+            vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
             print(f"Building ensemble from {len(aes)} aes...")
             centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=None,given_gt=None)
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
@@ -452,7 +452,7 @@ if __name__ == "__main__":
 
         ensemble_fname = f'../{ARGS.dset}/experiments/{ARGS.exp_name}_ensemble.json'
         np.savez(ensemble_fname,ensemble_labels=best_ensemble_labels,all_agree=best_all_agree)
-        by_aeid = {aeid:{**vecs_and_labels[aeid],**centroids_by_id[aeid]} for aeid in aeids}
+        by_aeid = {aeid:{**vecs_and_labels[aeid],**centroids_by_id[aeid]} for aeid in set(vecs_and_labels.keys()).intersection(set(centroids_by_id.keys()))}
         for aeid,v in by_aeid.items():
             fname = f'../{ARGS.dset}/experiments/{ARGS.exp_name}_aeid{aeid}_centroids.json'
             arrays_to_save = {k:v for k,v in by_aeid[aeid].items() if k!='aeid'}
