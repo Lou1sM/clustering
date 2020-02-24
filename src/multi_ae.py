@@ -1,3 +1,8 @@
+import signal
+import sys
+signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
+import warnings
+warnings.filterwarnings('ignore')
 from functools import partial
 from pdb import set_trace
 from time import time
@@ -6,19 +11,17 @@ import copy
 import hdbscan
 import numpy as np
 import random
-import sys
 import torch
 import torch.nn as nn
 import umap.umap_ as umap
 import utils
-import warnings
-warnings.filterwarnings('ignore')
 
 
 def pretrain_ae(ae_dict,args,should_change):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid,ae = ae_dict['aeid'],ae_dict['ae']
+        print(f'Pretraining {aeid}')
         befores = [p.detach().cpu() for p in ae.parameters()]
         dset = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
@@ -33,14 +36,16 @@ def pretrain_ae(ae_dict,args,should_change):
                 loss = loss_func(pred,xb).mean()
                 loss.backward(); opt.step(); opt.zero_grad()
                 total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
+                if i%10 == 0: print(loss.item())
                 if args.test: break
-            if args.test: break
             print(f'Pretraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
+            if args.test: break
         if should_change:
             afters = [p.detach().cpu() for p in ae.parameters()]
             for b,a in zip(befores,afters): assert not (b==a).all()
     if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/pt{aeid}.pt')
-    return np.array([dset[i][1] for i in range(len(dset))])
+    #return np.array([dset[i][1] for i in range(len(dset))])
+    print('finished pretraining', aeid)
 
 def generate_vecs_single(ae_dict,args):
     aeid, ae = ae_dict['aeid'],ae_dict['ae']
@@ -64,7 +69,9 @@ def label_single(ae_output,args):
     aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
         print('Skipping umap and hdbscan')
-        latent_labels = np.load(f'../{args.dset}/labels/latent_labels{aeid}.npy')
+        #latent_labels = np.load(f'../{args.dset}/labels/latent_labels{aeid}.npy')
+        #latent_labels = np.random.randint(60000)
+        latent_labels = np.tile(np.arange(10),6000)
         umapped_latents = None
     else:
         print('Umapping latents...')
@@ -119,8 +126,15 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
     with torch.cuda.device(device):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
         befores = [p.detach().cpu() for p in ae.parameters()]
-        if aeid not in centroids_by_id.keys():
-            print(aeid, ', you must be new here')
+        if True or aeid not in centroids_by_id.keys():
+            print(f'{aeid}, you must be new here, not in {centroids_by_id.keys()}')
+            DATASET = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
+            dl = data.DataLoader(DATASET,batch_sampler=data.BatchSampler(data.RandomSampler(DATASET),args.batch_size,drop_last=True),pin_memory=False)
+            loss_func=nn.L1Loss()
+            xb = next(iter(dl))[0]
+            pred = ae.dec(ae.enc(xb)[1])[1]
+            l = loss_func(xb,pred)
+            print('init_loss', l)
             pretrain_ae(ae_dict,args=args,should_change=False)
             return aeid
         centroids_dict = centroids_by_id[aeid]
@@ -301,16 +315,23 @@ if __name__ == "__main__":
     if 1 in ARGS.sections: #Pretrain aes rather than load
         pretrain_start_time = time()
         aes = []
-        print(f"Instantiating {len(aes)} aes...")
+        print(f"Instantiating {len(aeids)} aes...")
         with torch.cuda.device(device):
             for aeid in aeids:
                 aes.append({'aeid':aeid, 'ae':utils.make_ae(aeid,device=device,NZ=ARGS.NZ)})
-        with ctx.Pool(processes=20) as pool:
+        #set_trace()
+        with ctx.Pool(processes=len(aes)) as pool:
             print(f"Pretraining {len(aes)} aes...")
-            gt_labelss = [filled_pretrain(ae) for ae in aes] if ARGS.single else pool.map(filled_pretrain, aes)
+            r=[filled_pretrain(ae) for ae in aes] if ARGS.single else pool.map(filled_pretrain, aes)
+            #try: r=pool.map(filled_pretrain, aes)
+            #except (KeyboardInterrupt, SystemExit):
+            #    #pool.terminate();
+            #    #sys.exit(0)
+            #    pass
+            #r.wait()
         print(f'Pretraining time: {utils.asMinutes(time()-pretrain_start_time)}')
     else:
-        with ctx.Pool(processes=20) as pool:
+        with ctx.Pool(processes=len(aeids)) as pool:
             print(f"Loading {len(aeids)} aes...")
             aes = [filled_load_ae(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_ae, aeids)
         try: assert all([a['ae'].enc.block2[-2][0].out_channels==ARGS.NZ for a in aes])
@@ -321,14 +342,20 @@ if __name__ == "__main__":
 
     if 2 in ARGS.sections:
         generate_start_time = time()
-        with ctx.Pool(processes=20) as pool:
+        with ctx.Pool(processes=len(aes)) as pool:
             print(f"Generating vecs for {len(aes)} aes...")
             vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
         print(f'Generation time: {utils.asMinutes(time()-generate_start_time)}')
     elif 3 in ARGS.sections or 4 in ARGS.sections:
-        with ctx.Pool(processes=20) as pool:
+        with ctx.Pool(processes=len(aes)) as pool:
             print(f"Loading vecs for {len(aes)} aes...")
-            vecs = [filled_load_vecs(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
+            vecs = [filled_load_vecs(aeid) for ae in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
+            #if ARGS.single:
+            #    aes = [filled_load_vecs(ae) for ae in aes]
+            #else:
+            #    r = pool.map(filled_load_vecs, [copy.deepcopy(ae) for ae in aes])
+            #    r.wait()
+            #    vecs = r._value
         assert all([v['latents'].shape[1] == ARGS.NZ for v in vecs])
 
     from sklearn.metrics import normalized_mutual_info_score as mi
@@ -340,14 +367,21 @@ if __name__ == "__main__":
         np.save(f'../{ARGS.dset}/labels/gt_labels.npy',gt_labels)
     if 3 in ARGS.sections:
         label_start_time = time()
-        with ctx.Pool(processes=20) as pool:
+        #with ctx.Pool(processes=20) as pool:
+        with ctx.Pool(processes=len(aes)) as pool:
             print(f"Labelling vecs for {len(aes)} aes...")
             labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+            #if ARGS.single: labels = [filled_label(v) for v in vecs]
+            #else:
+            #    r = pool.map(filled_label, vecs)
+            #    r.wait()
+            #    labels = r._value
         print(f'Labelling time: {utils.asMinutes(time()-label_start_time)}')
     elif 4 in ARGS.sections:
-        with ctx.Pool(processes=20) as pool:
+        with ctx.Pool(processes=len(aes)) as pool:
             print(f"Loading labels for {len(aes)} aes...")
-            labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels,aeids)
+            labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels, aeids)
+            #labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels,aeids)
 
     if 4 in ARGS.sections:
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
@@ -391,7 +425,7 @@ if __name__ == "__main__":
             difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(concatted_labels) if l != -1], key=lambda x: (concatted_labels[~all_agree]==x).sum()/(concatted_labels==x).sum(),reverse=True)
             print('difficults:',difficult_list)
             worst3 = difficult_list[:3]
-            with ctx.Pool(processes=20) as pool:
+            with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Training aes {list(aeids)}...")
 
                 try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
@@ -403,16 +437,21 @@ if __name__ == "__main__":
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
                 filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,ensemble_labels=ensemble_labels,all_agree=all_agree,worst3=worst3)
-                discardeds = [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
+                [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
+                #if ARGS.single: [filled_train(ae) for ae in copied_aes]
+                #else:
+                #    r = pool.map(filled_train, copied_aes)
+                #    r.wait()
+                #    labels = r._value
             aes = copied_aes
             assert set([ae['aeid'] for ae in aes]) == set(aeids)
-            with ctx.Pool(processes=20) as pool:
+            with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Generating vecs for {len(aes)} aes...")
                 vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
-            with ctx.Pool(processes=20) as pool:
+            with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Generating labels for {len(aes)} aes...")
                 labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
-            if len(labels) == 1: concatted_labels = labels[0]['latent_labels']
+            if len(labels) == 1 or ARGS.test: concatted_labels = labels[0]['latent_labels']
             else:
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
