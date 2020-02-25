@@ -10,12 +10,9 @@ import torch
 import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
 import numpy as np
-import seaborn as sns
 import torchvision.datasets as tdatasets
 from fastai import datasets,layers
 import umap.umap_ as umap
-from sklearn.datasets import fetch_mldata
-import seaborn as sns
 from torch.utils import data
 from sklearn.metrics import adjusted_rand_score
 

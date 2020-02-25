@@ -13,7 +13,7 @@ import numpy as np
 import random
 import torch
 import torch.nn as nn
-import umap.umap_ as umap
+import gpumap
 import utils
 
 
@@ -70,7 +70,7 @@ def label_single(ae_output,args):
         umapped_latents = None
     else:
         print('Umapping latents...')
-        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
+        umapped_latents = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
         print('Scanning latents...')
         latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         latent_labels = latent_scanner.fit_predict(umapped_latents)
@@ -363,7 +363,7 @@ if __name__ == "__main__":
         elif len(labels) == 1: concatted_labels = labels[0]['latent_labels']
         else:
             print('Umapping concatted vecs...')
-            umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+            umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
             print(f'Umap concat time: {utils.asMinutes(time()-concat_umap_start_time)}')
             concat_scan_start_time = time()
             print('Scanning umapped concatted vecs...')
@@ -427,7 +427,7 @@ if __name__ == "__main__":
             else:
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+                umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
                 concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
