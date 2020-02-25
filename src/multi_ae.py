@@ -14,6 +14,7 @@ import random
 import torch
 import torch.nn as nn
 import gpumap
+import umap
 import utils
 
 
@@ -70,7 +71,11 @@ def label_single(ae_output,args):
         umapped_latents = None
     else:
         print('Umapping latents...')
-        umapped_latents = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
+        try:
+            umapped_latents = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
+        except Exception as e:
+            umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
+            print(e)
         print('Scanning latents...')
         latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         latent_labels = latent_scanner.fit_predict(umapped_latents)
@@ -102,8 +107,9 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             print('No all agree vecs for centroids')
             print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
-            continue
-        latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
+            latent_centroids = np.zeros(ensemble_num_labels,args.NZ)
+        else:
+            latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
         try:
             assert (latent_centroids == latent_centroids).all()
         except: set_trace()
@@ -122,12 +128,15 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
     with torch.cuda.device(device):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
         befores = [p.detach().cpu() for p in ae.parameters()]
-        if aeid not in centroids_by_id.keys():
-            print(f'{aeid}, you must be new here, not in {list(centroids_by_id.keys())}')
-            pretrain_ae(ae_dict,args=args,should_change=False)
-            return aeid
-        centroids_dict = centroids_by_id[aeid]
-        latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
+        #if aeid not in centroids_by_id.keys():
+        #    print(f'{aeid}, you must be new here, not in {list(centroids_by_id.keys())}')
+        #    set_trace()
+        #    pretrain_ae(ae_dict,args=args,should_change=False)
+        #    return aeid
+        train_cr = aeid in centroids_by_id.keys()
+        if train_cr:
+            centroids_dict = centroids_by_id[aeid]
+            latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
 
         DATASET = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(DATASET,batch_sampler=data.BatchSampler(data.RandomSampler(DATASET),args.batch_size,drop_last=True),pin_memory=False)
@@ -143,8 +152,8 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
         multihots = torch.tensor(multihots,device='cuda')
         all_agree = torch.tensor(all_agree,device=device)
-        try: assert multihots.shape[1] == latent_centroids.shape[0]
-        except: set_trace()
+        #try: assert multihots.shape[1] == latent_centroids.shape[0]
+        #except: set_trace()
         for epoch in range(args.epochs):
             total_rloss = 0.
             total_closs = 0.
@@ -169,7 +178,6 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                 except Exception as e:
                     print(e)
                     set_trace()
-                latent_centroid_targets = latent_centroids[targets.argmax(1)]
                 dec_mid,rpred = ae.dec(utils.noiseify(latent,args.noise))
                 rloss = loss_func(rpred,xb)
                 if not mask.any():
@@ -181,16 +189,19 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                     if worstmask3.any():
                         w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)
                     else: w3loss = torch.tensor(0.,device=device)
-                    cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
-                    crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
                     lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
                     gauss_loss = ce_loss_func(lin_pred,targets).mean()
-                    closs = 0.1*(crloss_).mean() + torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + 0.1*rloss.mean() + w2loss.mean() + w3loss.mean()
+                    closs = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + 0.1*rloss.mean() + w2loss.mean() + w3loss.mean()
+                    if train_cr:
+                        latent_centroid_targets = latent_centroids[targets.argmax(1)]
+                        cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
+                        crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
+                        closs += 0.1*(crloss_).mean()
+                        total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
                     total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
                     total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
                     total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
                     total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
-                    total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
                     loss = rloss.mean() + args.clmbda*closs
                 assert loss != 0
                 loss.backward(); opt.step(); opt.zero_grad()
@@ -363,7 +374,12 @@ if __name__ == "__main__":
         elif len(labels) == 1: concatted_labels = labels[0]['latent_labels']
         else:
             print('Umapping concatted vecs...')
-            umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+            try:
+                umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+            except Exception as e:
+                print(e)
+                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+
             print(f'Umap concat time: {utils.asMinutes(time()-concat_umap_start_time)}')
             concat_scan_start_time = time()
             print('Scanning umapped concatted vecs...')
@@ -377,6 +393,9 @@ if __name__ == "__main__":
         print(f"Building ensemble from {len(aes)} aes...")
         centroids_by_id, multihots, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
         ensemble_labels = multihots.argmax(-1)
+        #for aeid in vecs_and_labels.keys():
+        #    prev_labs = vecs_and_labels[aeid]['latent_labels']
+        #    vecs_and_labels[aeid]['latent_labels'] = utils.translate_labellings(prev_labs,ensemble_labels)
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
     elif 5 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
@@ -427,7 +446,11 @@ if __name__ == "__main__":
             else:
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-                umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+                try:
+                    umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+                except Exception as e:
+                    print(e)
+                    umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
                 concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
