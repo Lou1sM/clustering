@@ -13,7 +13,6 @@ import numpy as np
 import random
 import torch
 import torch.nn as nn
-import gpumap
 import umap
 import utils
 
@@ -71,11 +70,7 @@ def label_single(ae_output,args):
         umapped_latents = None
     else:
         print('Umapping latents...')
-        try:
-            umapped_latents = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
-        except Exception as e:
-            umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
-            print(e)
+        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
         print('Scanning latents...')
         latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         latent_labels = latent_scanner.fit_predict(umapped_latents)
@@ -107,7 +102,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         print(aeid, 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['latent_labels']))
     for aeid in set(usable_latent_labels.keys()):
         new_centroid_info={'aeid':aeid}
-        if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
+        if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels)) if i != -1]):
             print('No all agree vecs for centroids')
             print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
             #latent_centroids = np.zeros((ensemble_num_labels,args.NZ))
@@ -125,6 +120,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         np.save(f'../{args.dset}/ensemble_labels.npy', ensemble_labels)
         np.save(f'../{args.dset}/multihots.npy', multihots)
         np.save(f'../{args.dset}/all_agree.npy', all_agree)
+    assert (ensemble_labels == multihots.argmax(-1)).all()
     return centroids_by_id, multihots, all_agree, ensemble_labels
 
 def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
@@ -382,11 +378,7 @@ if __name__ == "__main__":
         elif len(labels) == 1: concatted_labels = labels[0]['latent_labels']
         else:
             print('Umapping concatted vecs...')
-            try:
-                umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
-            except Exception as e:
-                print(e)
-                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+            umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
 
             print(f'Umap concat time: {utils.asMinutes(time()-concat_umap_start_time)}')
             concat_scan_start_time = time()
@@ -401,6 +393,7 @@ if __name__ == "__main__":
         print(f"Building ensemble from {len(aes)} aes...")
         centroids_by_id, multihots, all_agree, ensemble_labels = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
         ensemble_labels = multihots.argmax(-1)
+        assert (ensemble_labels == multihots.argmax(-1)).all()
         #for aeid in vecs_and_labels.keys():
         #    prev_labs = vecs_and_labels[aeid]['latent_labels']
         #    vecs_and_labels[aeid]['latent_labels'] = utils.translate_labellings(prev_labs,ensemble_labels)
@@ -408,7 +401,7 @@ if __name__ == "__main__":
     elif 5 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
         centroids_by_id, multihots, all_agree = filled_load_ensemble(aeids)
-        assert (ensemble_labels == multihots.argmax(-1)).all()
+        ensemble_labels = multihots.argmax(-1)
         concatted_labels = np.load(f'../{ARGS.dset}/labels/concatted_labels.npy')
 
     if 5 in ARGS.sections:
@@ -454,19 +447,13 @@ if __name__ == "__main__":
             else:
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-                try:
-                    umapped_concats = gpumap.GPUMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
-                except Exception as e:
-                    print(e)
-                    umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
                 concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
             print(f"Building ensemble from {len(aes)} aes...")
             centroids_by_id, multihots, all_agree, ensemble_labels  = build_ensemble(vecs_and_labels,ARGS,pivot=None,given_gt=None)
-            #ensemble_labels = multihots.argmax(-1)
-            assert (ensemble_labels == multihots.argmax(-1)).all()
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
 
             acc = utils.accuracy(ensemble_labels,gt_labels)
