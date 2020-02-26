@@ -120,7 +120,8 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         np.save(f'../{args.dset}/ensemble_labels.npy', ensemble_labels)
         np.save(f'../{args.dset}/multihots.npy', multihots)
         np.save(f'../{args.dset}/all_agree.npy', all_agree)
-    assert (ensemble_labels == multihots.argmax(-1)).all()
+    try: assert (ensemble_labels[all_agree] == multihots[all_agree].argmax(-1)).all()
+    except: set_trace()
     return centroids_by_id, multihots, all_agree, ensemble_labels
 
 def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
