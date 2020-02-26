@@ -107,7 +107,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             print('No all agree vecs for centroids')
             print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
-            latent_centroids = np.zeros(ensemble_num_labels,args.NZ)
+            latent_centroids = np.zeros((ensemble_num_labels,args.NZ))
         else:
             latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
         try:
@@ -134,9 +134,11 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         #    pretrain_ae(ae_dict,args=args,should_change=False)
         #    return aeid
         train_cr = aeid in centroids_by_id.keys()
+        print(f'AEID: {aeid}, TRAIN CR: {train_cr}')
         if train_cr:
             centroids_dict = centroids_by_id[aeid]
             latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
+        else: print(f'Not training cr for {aeid}, not in {list(centroids_by_id.keys())}')
 
         DATASET = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(DATASET,batch_sampler=data.BatchSampler(data.RandomSampler(DATASET),args.batch_size,drop_last=True),pin_memory=False)
@@ -194,6 +196,9 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                     closs = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + 0.1*rloss.mean() + w2loss.mean() + w3loss.mean()
                     if train_cr:
                         latent_centroid_targets = latent_centroids[targets.argmax(1)]
+                        mask2 = ~(latent_centroid_targets==0).max(dim=-1)[0]
+                        mask *= mask2
+                        #new_mask = mask*(not latent_centroid_targets==0).max(dim=-1)
                         cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
                         crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
                         closs += 0.1*(crloss_).mean()
@@ -415,7 +420,7 @@ if __name__ == "__main__":
                 print('No legit aes left')
                 sys.exit()
             print('Aes remaining:', *list(aeids))
-            difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(concatted_labels) if l != -1], key=lambda x: (concatted_labels[~all_agree]==x).sum()/(concatted_labels==x).sum(),reverse=True)
+            difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(ensemble_labels) if l != -1], key=lambda x: (concatted_labels[~all_agree]==x).sum()/(concatted_labels==x).sum(),reverse=True)
             print('difficults:',difficult_list)
             worst3 = difficult_list[:3]
             with ctx.Pool(processes=len(aes)) as pool:
