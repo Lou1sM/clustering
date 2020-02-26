@@ -425,7 +425,7 @@ if __name__ == "__main__":
 
                 try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
                 except: set_trace()
-                num_labels = len(set(ensemble_labels))
+                num_labels = utils.get_num_labels(ensemble_labels)
                 for aedict in copied_aes:
                     try: assert(aedict['ae'].pred.in_features == ARGS.NZ)
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
