@@ -5,6 +5,7 @@ import warnings
 warnings.filterwarnings('ignore')
 from functools import partial
 from pdb import set_trace
+from scipy.stats import entropy
 from time import time
 from torch.utils import data
 import copy
@@ -17,11 +18,11 @@ import umap
 import utils
 
 
-def pretrain_ae(ae_dict,args,should_change):
+def rtrain_ae(ae_dict,args,should_change):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid,ae = ae_dict['aeid'],ae_dict['ae']
-        print(f'Pretraining {aeid}')
+        print(f'Rtraining {aeid}')
         befores = [p.detach().cpu() for p in ae.parameters()]
         dset = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
@@ -37,7 +38,7 @@ def pretrain_ae(ae_dict,args,should_change):
                 loss.backward(); opt.step(); opt.zero_grad()
                 total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
                 if args.test: break
-            print(f'Pretraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
+            print(f'Rtraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
             if args.test: break
         if should_change:
             afters = [p.detach().cpu() for p in ae.parameters()]
@@ -131,14 +132,10 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         befores = [p.detach().cpu() for p in ae.parameters()]
         if aeid not in centroids_by_id.keys():
             print(f'{aeid}, you must be new here, not in {list(centroids_by_id.keys())}')
-            pretrain_ae(ae_dict,args=args,should_change=False)
+            rtrain_ae(ae_dict,args=args,should_change=False)
             return aeid
-        #train_cr = aeid in centroids_by_id.keys()
-        #print(f'AEID: {aeid}, TRAIN CR: {train_cr}')
-        #if train_cr:
         centroids_dict = centroids_by_id[aeid]
         latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
-        #else: print(f'Not training cr for {aeid}, not in {list(centroids_by_id.keys())}')
 
         DATASET = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(DATASET,batch_sampler=data.BatchSampler(data.RandomSampler(DATASET),args.batch_size,drop_last=True),pin_memory=False)
@@ -152,10 +149,11 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         opt.add_param_group({'params':ae.pred.parameters(),'lr':1e-3})
         opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
         opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
+        multihots_entropy = entropy(multihots,axis=-1)
+        confidences = 1/(1+multihots_entropy)
+        assert (confidences==confidences).all()
         multihots = torch.tensor(multihots,device='cuda')
         all_agree = torch.tensor(all_agree,device=device)
-        #try: assert multihots.shape[1] == latent_centroids.shape[0]
-        #except: set_trace()
         for epoch in range(args.epochs):
             total_rloss = 0.
             total_closs = 0.
@@ -194,11 +192,9 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                     lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
                     gauss_loss = ce_loss_func(lin_pred,targets).mean()
                     closs = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + 0.1*rloss.mean() + w2loss.mean() + w3loss.mean()
-                    #if train_cr:
                     latent_centroid_targets = latent_centroids[targets.argmax(1)]
                     mask2 = ~(latent_centroid_targets==0).max(dim=-1)[0]
                     mask *= mask2
-                    #new_mask = mask*(not latent_centroid_targets==0).max(dim=-1)
                     cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
                     crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
                     closs += 0.1*(crloss_).mean()
@@ -262,6 +258,7 @@ def load_ensemble(aeids,args):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--NZ',type=int,default=50)
     parser.add_argument('--batch_size',type=int,default=64)
     parser.add_argument('--patience',type=int,default=7)
@@ -291,6 +288,13 @@ if __name__ == "__main__":
     ARGS = parser.parse_args()
     print(ARGS)
 
+    if ARGS.short_epochs:
+        ARGS.pretrain_epochs = 1
+        ARGS.epochs = 1
+        ARGS.inter_epochs = 1
+        ARGS.pretrain_epochs = 1
+        ARGS.meta_epochs = 2
+
     if ARGS.test and ARGS.save:
         print("shouldn't be saving for a test run")
         sys.exit()
@@ -312,7 +316,7 @@ if __name__ == "__main__":
         aeids = range(ARGS.ae_range[0],ARGS.ae_range[1])
     ctx = mp.get_context("spawn")
 
-    filled_pretrain = partial(pretrain_ae,args=ARGS,should_change=True)
+    filled_pretrain = partial(rtrain_ae,args=ARGS,should_change=True)
     filled_generate = partial(generate_vecs_single,args=ARGS)
     filled_label = partial(label_single,args=ARGS)
     filled_load_ae = partial(load_ae,args=ARGS)
@@ -320,7 +324,7 @@ if __name__ == "__main__":
     filled_load_labels = partial(load_labels,args=ARGS)
     filled_load_ensemble = partial(load_ensemble,args=ARGS)
     device = torch.device(f'cuda:{ARGS.gpu}')
-    if 1 in ARGS.sections: #Pretrain aes rather than load
+    if 1 in ARGS.sections: #Rtrain aes rather than load
         pretrain_start_time = time()
         aes = []
         print(f"Instantiating {len(aeids)} aes...")
@@ -395,9 +399,6 @@ if __name__ == "__main__":
         centroids_by_id, multihots, all_agree, ensemble_labels = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
         ensemble_labels = multihots.argmax(-1)
         assert (ensemble_labels == multihots.argmax(-1)).all()
-        #for aeid in vecs_and_labels.keys():
-        #    prev_labs = vecs_and_labels[aeid]['latent_labels']
-        #    vecs_and_labels[aeid]['latent_labels'] = utils.translate_labellings(prev_labs,ensemble_labels)
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
     elif 5 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
