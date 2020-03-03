@@ -150,7 +150,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         confidence_mask = (multihots.max(axis=-1)>0)
         m = multihots+~confidence_mask[:,None]
         multihots_entropy = entropy(m,axis=-1)
-        confidences = 1/(1+multihots_entropy)
+        confidences = torch.tensor(1/(1+multihots_entropy),device='cuda')
         assert (confidences==confidences).all()
         multihots = torch.tensor(multihots,device='cuda')
         all_agree = torch.tensor(all_agree,device=device)
@@ -166,10 +166,10 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                 try:enc_mid,latent  = ae.enc(xb)
                 except Exception as e:print(e); set_trace()
                 targets = multihots[idx,:]
+                batch_confidences = confidences[idx]
                 wor1 = (targets.argmax(1) == worst3[0])
                 wor2 = (targets.argmax(1) == worst3[1])
                 wor3 = (targets.argmax(1) == worst3[2])
-                mask = all_agree[idx]
                 worstmask2 = (wor1 + wor2)
                 worstmask3 = (wor1 + wor2 + wor3)
                 try:
@@ -180,31 +180,27 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                     set_trace()
                 dec_mid,rpred = ae.dec(utils.noiseify(latent,args.noise))
                 rloss = loss_func(rpred,xb)
-                if not mask.any():
-                    loss = rloss.mean()
-                else:
-                    if worstmask2.any():
-                        w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)
-                    else: w2loss = torch.tensor(0.,device=device)
-                    if worstmask3.any():
-                        w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)
-                    else: w3loss = torch.tensor(0.,device=device)
-                    lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
-                    gauss_loss = ce_loss_func(lin_pred,targets).mean()
-                    closs = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + 0.1*rloss.mean() + w2loss.mean() + w3loss.mean()
-                    latent_centroid_targets = latent_centroids[targets.argmax(1)]
-                    mask2 = ~(latent_centroid_targets==0).max(dim=-1)[0]
-                    mask *= mask2
-                    try:cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
-                    except: print(f'Not working at {aeid}')
-                    crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
-                    closs += 0.1*(crloss_).mean()
-                    total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
-                    total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
-                    total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
-                    total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
-                    total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
-                    loss = rloss.mean() + args.clmbda*closs
+                if worstmask2.any():
+                    w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)*batch_confidences[worstmask2,None]
+                else: w2loss = torch.tensor(0.,device=device)
+                if worstmask3.any():
+                    w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)*batch_confidences[worstmask3,None]
+                else: w3loss = torch.tensor(0.,device=device)
+                lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
+                gauss_loss = ce_loss_func(lin_pred,targets)*batch_confidences[:,None]
+                closs = gauss_loss.mean() + rloss.mean() + w2loss.mean() + w3loss.mean()
+                latent_centroid_targets = latent_centroids[targets.argmax(1)]
+                try:cdec_mid,crpred = ae.dec(latent_centroid_targets[:,:,None,None])
+                except: print(f'Not working at {aeid}')
+                try:crloss_ = loss_func(crpred,xb).mean(dim=[1,2,3])
+                except: set_trace()
+                closs += (0.1*batch_confidences[:,None]*crloss_).mean()
+                total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
+                total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
+                total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
+                total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
+                total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
+                loss = rloss.mean() + args.clmbda*closs
                 assert loss != 0
                 loss.backward(); opt.step(); opt.zero_grad()
                 if args.test: break
