@@ -85,7 +85,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[0]
     print(f'All nums labels: {nums_labels}, ensemble num labels: {ensemble_num_labels}')
     assert given_gt is None or ensemble_num_labels == utils.get_num_labels(given_gt)
-    usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['latent_labels']) == ensemble_num_labels}
+    usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items()}
     if pivot is not None and ensemble_num_labels == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=pivot)
     else:
@@ -98,11 +98,9 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     ensemble_labels = utils.compress_labels([l if l in solid_labels else -1 for l in ensemble_labels])
     multihots = multihots[:,sorted(solid_labels)] # Drop columns of non-solid labels
     centroids_by_id = {}
-    #for aeid in vecs_and_labels.keys():
-        #print(aeid, 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['latent_labels']))
     for aeid in set(usable_latent_labels.keys()):
         new_centroid_info={'aeid':aeid}
-        if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels)) if i != -1]):
+        if not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels)) if i != -1]):
             print('No all agree vecs for centroids')
             print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
             continue
@@ -112,7 +110,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
             assert (latent_centroids == latent_centroids).all()
         except: set_trace()
         new_centroid_info['latent_centroids'] = latent_centroids
-        if args.save: 
+        if args.save:
             print(f'saving to ../{args.dset}/centroids/latent_centroids{aeid}.npy')
             np.save(f'../{args.dset}/centroids/latent_centroids{aeid}.npy', latent_centroids)
         centroids_by_id[aeid] = new_centroid_info
@@ -253,7 +251,6 @@ def load_ensemble(aeids,args):
             new_centroids['latent_centroids'] = np.load(f'../{args.dset}/centroids/latent_centroids{aeid}.npy')
             centroids_by_id[aeid] = new_centroids
         except FileNotFoundError: pass
-    #ensemble_labels = np.load(f'../{args.dset}/ensemble_labels.npy')
     multihots = np.load(f'../{args.dset}/multihots.npy')
     all_agree = np.load(f'../{args.dset}/all_agree.npy')
     return centroids_by_id, multihots, all_agree
