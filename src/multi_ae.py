@@ -43,7 +43,7 @@ def rtrain_ae(ae_dict,args,should_change):
         if should_change:
             afters = [p.detach().cpu() for p in ae.parameters()]
             for b,a in zip(befores,afters): assert not (b==a).all()
-    if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/pt{aeid}.pt')
+        if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/pt{aeid}.pt')
 
 def generate_vecs_single(ae_dict,args):
     aeid, ae = ae_dict['aeid'],ae_dict['ae']
@@ -82,46 +82,45 @@ def label_single(ae_output,args):
 def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     nums_labels = [utils.get_num_labels(ae_results['latent_labels']) for ae_results in vecs_and_labels.values()]
     counts = {x:nums_labels.count(x) for x in set(nums_labels)}
-    ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[0]
+    num_labels_by_freq = sorted([x for x,c in counts.items() if c==max(counts.values())])
+    ensemble_num_labels = num_labels_by_freq[len(num_labels_by_freq)//2]
     print(f'All nums labels: {nums_labels}, ensemble num labels: {ensemble_num_labels}')
     assert given_gt is None or ensemble_num_labels == utils.get_num_labels(given_gt)
-    usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items()}
+    usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['latent_labels']) == ensemble_num_labels}
     if pivot is not None and ensemble_num_labels == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=pivot)
     else:
         same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=None)
     multihots = utils.ask_ensemble(np.stack(same_lang_labels))
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_latent_labels))
-    ensemble_labels_ = multihots.argmax(axis=1)
-    ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
+    ensemble_labels = multihots.argmax(axis=1)
+    #ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
     solid_labels = [i for i in sorted(set(ensemble_labels)) if ((ensemble_labels==i)*all_agree).any()]
-    ensemble_labels = utils.compress_labels([l if l in solid_labels else -1 for l in ensemble_labels])
-    multihots = multihots[:,sorted(solid_labels)] # Drop columns of non-solid labels
+    #ensemble_labels = utils.compress_labels([l if l in solid_labels else -1 for l in ensemble_labels])
+    #multihots = multihots[:,sorted(solid_labels)] # Drop columns of non-solid labels
     centroids_by_id = {}
-    for aeid in set(usable_latent_labels.keys()):
-        new_centroid_info={'aeid':aeid}
-        if not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels)) if i != -1]):
-            print('No all agree vecs for centroids')
-            print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
-            continue
-        else:
+    for l in same_lang_labels+[ensemble_labels]: print({i:(l==i).sum() for i in set(l)})
+    if not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels)) if i != -1]):
+        print(f'No all agree vecs for all labels, not making centroids')
+        print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
+    else:
+        for aeid in set(usable_latent_labels.keys()):
+            new_centroid_info={'aeid':aeid}
             latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
-        try:
-            assert (latent_centroids == latent_centroids).all()
-        except: set_trace()
-        new_centroid_info['latent_centroids'] = latent_centroids
-        if args.save:
-            print(f'saving to ../{args.dset}/centroids/latent_centroids{aeid}.npy')
-            np.save(f'../{args.dset}/centroids/latent_centroids{aeid}.npy', latent_centroids)
-        centroids_by_id[aeid] = new_centroid_info
+            try:
+                assert (latent_centroids == latent_centroids).all()
+            except: set_trace()
+            new_centroid_info['latent_centroids'] = latent_centroids
+            if args.save:
+                print(f'saving to ../{args.dset}/centroids/latent_centroids{aeid}.npy')
+                np.save(f'../{args.dset}/centroids/latent_centroids{aeid}.npy', latent_centroids)
+            centroids_by_id[aeid] = new_centroid_info
 
     if args.save:
         np.save(f'../{args.dset}/ensemble_labels.npy', ensemble_labels)
         np.save(f'../{args.dset}/multihots.npy', multihots)
         np.save(f'../{args.dset}/all_agree.npy', all_agree)
-    try: assert (ensemble_labels[all_agree] == multihots[all_agree].argmax(-1)).all()
-    except: set_trace()
-    return centroids_by_id, multihots, all_agree, ensemble_labels
+    return centroids_by_id, multihots, all_agree
 
 def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
     device = torch.device(f'cuda:{args.gpu}')
@@ -130,10 +129,11 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         befores = [p.detach().cpu() for p in ae.parameters()]
         if aeid not in centroids_by_id.keys():
             print(f'{aeid} is not in {list(centroids_by_id.keys())}')
-            rtrain_ae(ae_dict,args=args,should_change=False)
-            return aeid
-        centroids_dict = centroids_by_id[aeid]
-        latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
+            crtrain = False
+        else:
+            centroids_dict = centroids_by_id[aeid]
+            latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
+            crtrain = True
 
         DATASET = utils.get_mnist_dset() if args.dset == 'MNIST' else utils.get_fashionmnist_dset()
         dl = data.DataLoader(DATASET,batch_sampler=data.BatchSampler(data.RandomSampler(DATASET),args.batch_size,drop_last=True),pin_memory=False)
@@ -179,23 +179,24 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                     print(e)
                     set_trace()
                 dec_mid,rpred = ae.dec(utils.noiseify(latent,args.noise))
-                rloss = loss_func(rpred,xb)
+                rloss = loss_func(rpred,xb)*(1-batch_confidences)[:,None]
                 if worstmask2.any():
-                    w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)*batch_confidences[worstmask2,None]
+                    w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)
                 else: w2loss = torch.tensor(0.,device=device)
                 if worstmask3.any():
-                    w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)*batch_confidences[worstmask3,None]
+                    w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)
                 else: w3loss = torch.tensor(0.,device=device)
                 lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
                 gauss_loss = ce_loss_func(lin_pred,targets)*batch_confidences[:,None]
                 closs = gauss_loss.mean() + rloss.mean() + w2loss.mean() + w3loss.mean()
-                latent_centroid_targets = latent_centroids[targets.argmax(1)]
-                try:cdec_mid,crpred = ae.dec(latent_centroid_targets[:,:,None,None])
-                except: print(f'Not working at {aeid}')
-                try:crloss_ = loss_func(crpred,xb).mean(dim=[1,2,3])
-                except: set_trace()
-                closs += (0.1*batch_confidences[:,None]*crloss_).mean()
-                total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
+                if crtrain:
+                    latent_centroid_targets = latent_centroids[targets.argmax(1)]
+                    try:cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
+                    except: print(f'Not working at {aeid}')
+                    crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
+                    closs += (0.1*batch_confidences[:,None]*crloss_).mean()
+                    closs += 0.1*(crloss_).mean()
+                    total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
                 total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
                 total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
                 total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
@@ -204,8 +205,8 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                 assert loss != 0
                 loss.backward(); opt.step(); opt.zero_grad()
                 if args.test: break
-            print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
             if args.test: break
+        print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
         for epoch in range(args.inter_epochs):
             epoch_loss = 0
             for i, (xb,yb,idx) in enumerate(dl):
@@ -217,7 +218,6 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                 epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
                 if args.test: break
             if args.test: break
-            print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
             if epoch_loss < 0.02: break
         afters = [p.detach().cpu() for p in ae.parameters()]
         for b,a in zip(befores,afters): assert not (b==a).all()
@@ -392,20 +392,19 @@ if __name__ == "__main__":
         labels = utils.dictify_list(labels,key='aeid')
         vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
         print(f"Building ensemble from {len(aes)} aes...")
-        centroids_by_id, multihots, all_agree, ensemble_labels = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
-        ensemble_labels = multihots.argmax(-1)
-        assert (ensemble_labels == multihots.argmax(-1)).all()
+        centroids_by_id, multihots, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
     elif 5 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
         centroids_by_id, multihots, all_agree = filled_load_ensemble(aeids)
-        ensemble_labels = multihots.argmax(-1)
         concatted_labels = np.load(f'../{ARGS.dset}/labels/concatted_labels.npy')
 
     if 5 in ARGS.sections:
         train_start_time = time()
         best_acc = 0.
         count = 0
+        num_agrees_list = []
+        ensemble_labels = multihots.argmax(-1)
         for meta_epoch_num in range(ARGS.max_meta_epochs):
             meta_epoch_start_time = time()
             print('\nMeta epoch:', meta_epoch_num)
@@ -422,13 +421,16 @@ if __name__ == "__main__":
 
                 try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
                 except: set_trace()
-                num_labels = utils.get_num_labels(ensemble_labels)
+                #num_labels = utils.get_num_labels(ensemble_labels)
+                num_labels = multihots.shape[1]
+                ensemble_labels = multihots.argmax(axis=1)
                 for aedict in copied_aes:
                     try: assert(aedict['ae'].pred.in_features == ARGS.NZ)
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
                 quot = multihots.sum(axis=-1)
+                print('Num all unknowns',(quot==0).sum())
                 quot += (quot==0) # Replace 0 entries with 1s
                 normalized_multihots = multihots/quot[:,None]
                 filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,multihots=normalized_multihots,all_agree=all_agree,worst3=worst3)
@@ -451,22 +453,23 @@ if __name__ == "__main__":
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
             print(f"Building ensemble from {len(aes)} aes...")
-            centroids_by_id, multihots, all_agree, ensemble_labels  = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
+            centroids_by_id, multihots, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
 
             acc = utils.accuracy(ensemble_labels,gt_labels)
+            ensemble_labels = multihots.argmax(1)
             concat_acc = utils.accuracy(concatted_labels,gt_labels)
             new_best_acc = max(acc,concat_acc)
             print('AE Scores:')
-            print('L acc', [utils.accuracy(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
-            print('L MI', [mi(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
+            #print('L acc', [utils.accuracy(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
+            print('Accs:', [utils.accuracy(v['latent_labels'][v['latent_labels']>=0],gt_labels[v['latent_labels']>=0]) for v in vecs_and_labels.values()])
+            print('MIs:', [mi(v['latent_labels'][v['latent_labels']>=0],gt_labels[v['latent_labels']>=0]) for v in vecs_and_labels.values()])
             print('Ensemble Scores:')
             print('Acc:',acc)
             print('Concat Acc:', concat_acc)
             print('Acc agree:', utils.accuracy(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi(ensemble_labels,gt_labels))
             print('NMI agree:',mi(ensemble_labels[all_agree],gt_labels[all_agree]))
-            print('Num agrees:', all_agree.sum())
             print(f'Meta Epoch time: {utils.asMinutes(time()-meta_epoch_start_time)}')
             if new_best_acc <= best_acc:
                 count += 1
@@ -477,6 +480,8 @@ if __name__ == "__main__":
                 best_all_agree = all_agree
             print('Best acc:', best_acc)
             print('Count:',count)
+            num_agrees_list.append(all_agree.sum())
+            print(f'Num agrees list: {num_agrees_list}')
             if count == ARGS.patience: break
 
         ensemble_fname = f'../{ARGS.dset}/experiments/{ARGS.exp_name}_ensemble.json'

@@ -452,7 +452,7 @@ def translate_labellings_fanout(trans_from_labels,trans_to_labels):
     cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
-    return np.array([col_ind[l] for l in trans_from_labels])
+    return np.array([-1 if l == -1 else col_ind[l] for l in trans_from_labels])
 
 def translate_labellings_fanin(trans_from_labels,trans_to_labels):
     cost_matrix = np.array([[label_assignment_cost(trans_to_labels,trans_from_labels,l1,l2) for l2 in set(trans_from_labels) if l2 != -1] for l1 in set(trans_to_labels) if l1 != -1])
@@ -465,7 +465,7 @@ def translate_labellings_fanin(trans_from_labels,trans_to_labels):
     trans_dict = {f:cl.index(f) for f in cl}
     for u,t in zip(untranslated,col_ind2): trans_dict[u]=t
     trans_dict[-1] = -1
-    return [trans_dict[i] for i in trans_from_labels]
+    return np.array([trans_dict[i] for i in trans_from_labels])
 
 def get_confusion_mat(labels1,labels2):
     if max(labels1) != max(labels2):
