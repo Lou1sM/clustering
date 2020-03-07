@@ -421,6 +421,7 @@ def check_ae_images(enc,dec,dataset,num_rows=5,stacked=False):
     x = enc(inimgs)[-1] if stacked else enc(inimgs)
     outimgs = dec(x)[-1] if stacked else dec(x)
     _, axes = plt.subplots(num_rows,4,figsize=(7,7))
+    inimgs, outimgs = inimgs.detach().cpu(), outimgs.detach().cpu()
     for i in range(num_rows):
         axes[i,0].imshow(inimgs[i,0])
         axes[i,1].imshow(outimgs[i,0])
@@ -519,6 +520,8 @@ def accuracy(labels1,labels2):
         return sum(trans_labels==labels2)/len(labels1)
     except Exception as e:
         print(e)
+        set_trace()
+        trans_labels = translate_labellings(labels1,labels2)
         print("Couldn't compute accuracy by translating, returning adjusted_rand_score instead")
         return adjusted_rand_score(labels1,labels2)
 

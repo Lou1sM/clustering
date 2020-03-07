@@ -95,10 +95,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     assert multihots.shape[1] == ensemble_num_labels
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_latent_labels))
     ensemble_labels = multihots.argmax(axis=1)
-    #ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
     solid_labels = [i for i in sorted(set(ensemble_labels)) if ((ensemble_labels==i)*all_agree).any()]
-    #ensemble_labels = utils.compress_labels([l if l in solid_labels else -1 for l in ensemble_labels])
-    #multihots = multihots[:,sorted(solid_labels)] # Drop columns of non-solid labels
     centroids_by_id = {}
     for l in same_lang_labels+[ensemble_labels]: print({i:(l==i).sum() for i in set(l)})
     if not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels)) if i != -1]):
@@ -224,6 +221,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         afters = [p.detach().cpu() for p in ae.parameters()]
         for b,a in zip(befores,afters): assert not (b==a).all()
         if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
+    if args.vis: utils.check_ae_images(ae.enc,ae.dec,DATASET,stacked=True)
 
 def load_ae(aeid,args):
     checkpoints_dir = "checkpoints_solid" if args.solid else "checkpoints"
@@ -261,6 +259,7 @@ if __name__ == "__main__":
     parser.add_argument('--patience',type=int,default=7)
     parser.add_argument('--clamp_gauss_loss',type=float,default=0.1)
     parser.add_argument('--clmbda',type=float,default=1.)
+    parser.add_argument('--conc',action='store_true')
     parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST'])
     parser.add_argument('--dec_lr',type=float,default=1e-3)
     parser.add_argument('--enc_lr',type=float,default=1e-3)
@@ -278,6 +277,7 @@ if __name__ == "__main__":
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--test','-t',action='store_true')
+    parser.add_argument('--vis',action='store_true')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--ae_range',type=int,nargs='+')
     group.add_argument('--aeids',type=int,nargs='+')
@@ -422,7 +422,6 @@ if __name__ == "__main__":
 
                 try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
                 except: set_trace()
-                #num_labels = utils.get_num_labels(ensemble_labels)
                 num_labels = multihots.shape[1]
                 ensemble_labels = multihots.argmax(axis=1)
                 for aedict in copied_aes:
@@ -444,12 +443,6 @@ if __name__ == "__main__":
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Labelling {len(aes)} aes...")
                 labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
-            #if len(labels) == 1 or ARGS.test: concatted_labels = labels[0]['latent_labels']
-            #else:
-            #    scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-            #    concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-            #    umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
-            #    concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
@@ -459,16 +452,20 @@ if __name__ == "__main__":
 
             acc = utils.accuracy(ensemble_labels,gt_labels)
             ensemble_labels = multihots.argmax(1)
-            #concat_acc = utils.accuracy(concatted_labels,gt_labels)
-            #new_best_acc = max(acc,concat_acc)
             new_best_acc = acc
             print('AE Scores:')
-            #print('L acc', [utils.accuracy(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
             print('Accs:', [utils.accuracy(v['latent_labels'][v['latent_labels']>=0],gt_labels[v['latent_labels']>=0]) for v in vecs_and_labels.values()])
             print('MIs:', [mi(v['latent_labels'][v['latent_labels']>=0],gt_labels[v['latent_labels']>=0]) for v in vecs_and_labels.values()])
+            if ARGS.conc:
+                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+                concatted_vecs = np.concatenate([v['latents'] for v in vecs.values()],axis=-1)
+                print('Umapping concatted vecs...')
+                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+                concatted_labels = scanner.fit_predict(umapped_concats)
+                concat_acc = utils.accuracy(concatted_labels,gt_labels)
+                print('Concat Acc:', concat_acc)
             print('Ensemble Scores:')
             print('Acc:',acc)
-            #print('Concat Acc:', concat_acc)
             print('Acc agree:', utils.accuracy(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi(ensemble_labels,gt_labels))
             print('NMI agree:',mi(ensemble_labels[all_agree],gt_labels[all_agree]))
