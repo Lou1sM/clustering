@@ -92,6 +92,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     else:
         same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=None)
     multihots = utils.ask_ensemble(np.stack(same_lang_labels))
+    assert multihots.shape[1] == ensemble_num_labels
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_latent_labels))
     ensemble_labels = multihots.argmax(axis=1)
     #ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
@@ -152,6 +153,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         multihots_entropy = entropy(m,axis=-1)
         confidences = torch.tensor(1/(1+multihots_entropy),device='cuda')
         assert (confidences==confidences).all()
+        assert confidences.max() <= 1 and confidences.min() >= 0
         multihots = torch.tensor(multihots,device='cuda')
         all_agree = torch.tensor(all_agree,device=device)
         for epoch in range(args.epochs):
@@ -179,7 +181,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                     print(e)
                     set_trace()
                 dec_mid,rpred = ae.dec(utils.noiseify(latent,args.noise))
-                rloss = loss_func(rpred,xb)*(1-batch_confidences)[:,None]
+                rloss = loss_func(rpred,xb).mean(dim=[1,2,3])*(1-batch_confidences)
                 if worstmask2.any():
                     w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)
                 else: w2loss = torch.tensor(0.,device=device)
@@ -191,9 +193,9 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                 closs = gauss_loss.mean() + rloss.mean() + w2loss.mean() + w3loss.mean()
                 if crtrain:
                     latent_centroid_targets = latent_centroids[targets.argmax(1)]
-                    try:cdec_mid,crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
-                    except: print(f'Not working at {aeid}')
-                    crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
+                    try:cdec_mid,crpred = ae.dec(latent_centroid_targets[:,:,None,None])
+                    except: print(f'Not working at {aeid}'); set_trace()
+                    crloss_ = loss_func(crpred,xb[:]).mean(dim=[1,2,3])
                     closs += (0.1*batch_confidences[:,None]*crloss_).mean()
                     closs += 0.1*(crloss_).mean()
                     total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
@@ -222,7 +224,6 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         afters = [p.detach().cpu() for p in ae.parameters()]
         for b,a in zip(befores,afters): assert not (b==a).all()
         if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
-    print('Finished epochs for ae', aeid)
 
 def load_ae(aeid,args):
     checkpoints_dir = "checkpoints_solid" if args.solid else "checkpoints"
@@ -443,12 +444,12 @@ if __name__ == "__main__":
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Labelling {len(aes)} aes...")
                 labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
-            if len(labels) == 1 or ARGS.test: concatted_labels = labels[0]['latent_labels']
-            else:
-                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-                concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
-                concatted_labels = scanner.fit_predict(umapped_concats)
+            #if len(labels) == 1 or ARGS.test: concatted_labels = labels[0]['latent_labels']
+            #else:
+            #    scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
+            #    concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
+            #    umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
+            #    concatted_labels = scanner.fit_predict(umapped_concats)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
@@ -458,15 +459,16 @@ if __name__ == "__main__":
 
             acc = utils.accuracy(ensemble_labels,gt_labels)
             ensemble_labels = multihots.argmax(1)
-            concat_acc = utils.accuracy(concatted_labels,gt_labels)
-            new_best_acc = max(acc,concat_acc)
+            #concat_acc = utils.accuracy(concatted_labels,gt_labels)
+            #new_best_acc = max(acc,concat_acc)
+            new_best_acc = acc
             print('AE Scores:')
             #print('L acc', [utils.accuracy(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
             print('Accs:', [utils.accuracy(v['latent_labels'][v['latent_labels']>=0],gt_labels[v['latent_labels']>=0]) for v in vecs_and_labels.values()])
             print('MIs:', [mi(v['latent_labels'][v['latent_labels']>=0],gt_labels[v['latent_labels']>=0]) for v in vecs_and_labels.values()])
             print('Ensemble Scores:')
             print('Acc:',acc)
-            print('Concat Acc:', concat_acc)
+            #print('Concat Acc:', concat_acc)
             print('Acc agree:', utils.accuracy(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi(ensemble_labels,gt_labels))
             print('NMI agree:',mi(ensemble_labels[all_agree],gt_labels[all_agree]))

@@ -517,7 +517,8 @@ def accuracy(labels1,labels2):
     try:
         trans_labels = translate_labellings(labels1,labels2)
         return sum(trans_labels==labels2)/len(labels1)
-    except:
+    except Exception as e:
+        print(e)
         print("Couldn't compute accuracy by translating, returning adjusted_rand_score instead")
         return adjusted_rand_score(labels1,labels2)
 
