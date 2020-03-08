@@ -491,7 +491,12 @@ def debable(labellings_list,pivot):
         translated_list.append(not_lar_translated)
     return translated_list
 
-def ask_ensemble(l): return (np.expand_dims(np.arange(l.max()+1),0)==np.expand_dims(l,2)).sum(axis=0)
+def compute_multihots(l,probs):
+    mold = np.expand_dims(np.arange(l.max()+1),0) # (num_aes, num_labels)
+    hits = (mold==np.expand_dims(l,2)) # (num_aes, dset_size, num_labels)
+    hits_with_probs = np.expand_dims(probs,2)*hits
+    multihots = hits_with_probs.sum(axis=0) # (dset_size, num_labels)
+    return multihots
 
 def check_latents(dec,latents,show,stacked):
     _, axes = plt.subplots(6,2,figsize=(7,7))
