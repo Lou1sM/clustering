@@ -405,6 +405,7 @@ if __name__ == "__main__":
         best_acc = 0.
         count = 0
         num_agrees_list = []
+        accs, mis = [], []
         ensemble_labels = multihots.argmax(-1)
         for meta_epoch_num in range(ARGS.max_meta_epochs):
             meta_epoch_start_time = time()
@@ -450,8 +451,10 @@ if __name__ == "__main__":
             centroids_by_id, multihots, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt=None)
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
 
-            acc = utils.accuracy(ensemble_labels,gt_labels)
             ensemble_labels = multihots.argmax(1)
+            acc = utils.accuracy(ensemble_labels,gt_labels)
+            accs.append(acc)
+            mis.append(mi(ensemble_labels,gt_labels))
             new_best_acc = acc
             print('AE Scores:')
             print('Accs:', [utils.accuracy(v['latent_labels'][v['latent_labels']>=0],gt_labels[v['latent_labels']>=0]) for v in vecs_and_labels.values()])
@@ -463,11 +466,13 @@ if __name__ == "__main__":
                 umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
                 concatted_labels = scanner.fit_predict(umapped_concats)
                 concat_acc = utils.accuracy(concatted_labels,gt_labels)
+                concat_mi = mi(concatted_labels,gt_labels)
                 print('Concat Acc:', concat_acc)
+                print('Concat MI:', concat_mi)
             print('Ensemble Scores:')
-            print('Acc:',acc)
+            print('Accs:',accs)
             print('Acc agree:', utils.accuracy(ensemble_labels[all_agree],gt_labels[all_agree]))
-            print('NMI:',mi(ensemble_labels,gt_labels))
+            print('NMI:',mis)
             print('NMI agree:',mi(ensemble_labels[all_agree],gt_labels[all_agree]))
             print(f'Meta Epoch time: {utils.asMinutes(time()-meta_epoch_start_time)}')
             if new_best_acc <= best_acc:

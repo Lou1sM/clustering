@@ -516,7 +516,7 @@ def dictify_list(x,key):
 
 def accuracy(labels1,labels2):
     try:
-        trans_labels = translate_labellings(labels1,labels2)
+        trans_labels = translate_labellings(compress_labels(labels1),compress_labels(labels2))
         return sum(trans_labels==labels2)/len(labels1)
     except Exception as e:
         print(e)
