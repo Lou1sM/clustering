@@ -94,7 +94,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=None)
-    probs_for_usables = np.stack([vecs_and_labels[aeid]['probs'] for aeid in usable_labels])
+    probs_for_usables = np.ones((len(vecs_and_labels),60000)) if ARGS.mask else np.stack([vecs_and_labels[aeid]['probs'] for aeid in usable_labels])
     multihots = utils.compute_multihots(np.stack(same_lang_labels),probs_for_usables)
     assert multihots.shape[1] == ensemble_num_labels
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_labels))
@@ -287,7 +287,7 @@ if __name__ == "__main__":
     parser.add_argument('--test','-t',action='store_true')
     parser.add_argument('--vis',action='store_true')
     parser.add_argument('--worst3',action='store_true')
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--ae_range',type=int,nargs='+')
     group.add_argument('--aeids',type=int,nargs='+')
     group.add_argument('--num_aes',type=int)
@@ -317,9 +317,11 @@ if __name__ == "__main__":
         aeids = ARGS.aeids
     elif ARGS.num_aes is not None:
         aeids = range(ARGS.num_aes)
-    else:
+    elif ARGS.ae_range is not None:
         assert len(ARGS.ae_range) == 2
         aeids = range(ARGS.ae_range[0],ARGS.ae_range[1])
+    else:
+        aeids = [0,1]
     ctx = mp.get_context("spawn")
 
     filled_pretrain = partial(rtrain_ae,args=ARGS,should_change=True)
