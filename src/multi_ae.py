@@ -385,9 +385,7 @@ if __name__ == "__main__":
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
         concat_umap_start_time = time()
-        if ARGS.test: concat_labels = labels[0]['labels']
-        elif len(labels) == 1: concatted_labels = labels[0]['labels']
-        else:
+        if ARGS.conc:
             print('Umapping concatted vecs...')
             umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
 
