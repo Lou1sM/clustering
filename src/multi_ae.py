@@ -147,8 +147,9 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
         opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
         opt.add_param_group({'params':ae.pred.parameters(),'lr':1e-3})
-        opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
-        opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
+        if args.worst3:
+            opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
+            opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
         confidence_mask = (multihots.max(axis=-1)>0)
         m = multihots+~confidence_mask[:,None]
         multihots_entropy = entropy(m,axis=-1)
@@ -159,7 +160,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
         all_agree = torch.tensor(all_agree,device=device)
         for epoch in range(args.epochs):
             total_rloss = 0.
-            total_closs = 0.
+            total_loss = 0.
             total_gloss = 0.
             total_crloss = 0.
             total_w2loss = 0.
@@ -169,42 +170,43 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,all_agree,worst3):
                 try:enc_mid,latent  = ae.enc(xb)
                 except Exception as e:print(e); set_trace()
                 targets = multihots[idx,:]
-                batch_confidences = confidences[idx]
-                wor1 = (targets.argmax(1) == worst3[0])
-                wor2 = (targets.argmax(1) == worst3[1])
-                wor3 = (targets.argmax(1) == worst3[2])
-                worstmask2 = (wor1 + wor2)
-                worstmask3 = (wor1 + wor2 + wor3)
-                try:
-                    worsttargets2 = targets[worstmask2][:,torch.tensor(worst3[:-1],device=device)]
-                    worsttargets3 = targets[worstmask3][:,torch.tensor(worst3,device=device)]
-                except Exception as e:
-                    print(e)
-                    set_trace()
+                batch_confidences = all_agree[idx] if args.mask else confidences[idx]
                 dec_mid,rpred = ae.dec(utils.noiseify(latent,args.noise))
-                rloss = loss_func(rpred,xb).mean(dim=[1,2,3])*(1-batch_confidences)
-                if worstmask2.any():
-                    w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)
-                else: w2loss = torch.tensor(0.,device=device)
-                if worstmask3.any():
-                    w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)
-                else: w3loss = torch.tensor(0.,device=device)
+                rloss = loss_func(rpred,xb).mean(dim=[1,2,3])*(1-batch_confidences.int())
                 lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
                 gauss_loss = ce_loss_func(lin_pred,targets)*batch_confidences[:,None]
-                closs = gauss_loss.mean() + rloss.mean() + w2loss.mean() + w3loss.mean()
+                loss = gauss_loss.mean() + args.rlmbda*rloss.mean()
+                if args.worst3:
+                    wor1 = (targets.argmax(1) == worst3[0])
+                    wor2 = (targets.argmax(1) == worst3[1])
+                    wor3 = (targets.argmax(1) == worst3[2])
+                    worstmask2 = (wor1 + wor2)
+                    worstmask3 = (wor1 + wor2 + wor3)
+                    try:
+                        worsttargets2 = targets[worstmask2][:,torch.tensor(worst3[:-1],device=device)]
+                        worsttargets3 = targets[worstmask3][:,torch.tensor(worst3,device=device)]
+                    except Exception as e:
+                        print(e)
+                        set_trace()
+                    if worstmask2.any():
+                        w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)
+                    else: w2loss = torch.tensor(0.,device=device)
+                    if worstmask3.any():
+                        w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)
+                    else: w3loss = torch.tensor(0.,device=device)
+                    loss += w2loss.mean() + w3loss.mean()
+                    total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
+                    total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
                 if crtrain:
                     latent_centroid_targets = latent_centroids[targets.argmax(1)]
                     try:cdec_mid,crpred = ae.dec(latent_centroid_targets[:,:,None,None])
                     except: print(f'Not working at {aeid}'); set_trace()
                     crloss_ = loss_func(crpred,xb[:]).mean(dim=[1,2,3])
-                    closs += (0.1*batch_confidences[:,None]*crloss_).mean()
-                    closs += 0.1*(crloss_).mean()
+                    loss += (0.1*batch_confidences[:,None]*crloss_).mean()
+                    loss += 0.1*(crloss_).mean()
                     total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
                 total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
-                total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
-                total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
                 total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
-                loss = rloss.mean() + args.clmbda*closs
                 assert loss != 0
                 loss.backward(); opt.step(); opt.zero_grad()
                 if args.test: break
@@ -263,7 +265,6 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size',type=int,default=64)
     parser.add_argument('--patience',type=int,default=7)
     parser.add_argument('--clamp_gauss_loss',type=float,default=0.1)
-    parser.add_argument('--clmbda',type=float,default=1.)
     parser.add_argument('--conc',action='store_true')
     parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST'])
     parser.add_argument('--dec_lr',type=float,default=1e-3)
@@ -274,6 +275,7 @@ if __name__ == "__main__":
     parser.add_argument('--gpu',type=str,default='0')
     parser.add_argument('--inter_epochs',type=int,default=8)
     parser.add_argument('--max_meta_epochs',type=int,default=30)
+    parser.add_argument('--mask',action='store_true')
     parser.add_argument('--noise',type=float,default=1.5)
     parser.add_argument('--pretrain_epochs',type=int,default=10)
     parser.add_argument('--save','-s',action='store_true')
@@ -281,8 +283,10 @@ if __name__ == "__main__":
     parser.add_argument('--seed',type=int,default=0)
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--solid',action='store_true')
+    parser.add_argument('--rlmbda',type=float,default=1.)
     parser.add_argument('--test','-t',action='store_true')
     parser.add_argument('--vis',action='store_true')
+    parser.add_argument('--worst3',action='store_true')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--ae_range',type=int,nargs='+')
     group.add_argument('--aeids',type=int,nargs='+')
@@ -419,27 +423,27 @@ if __name__ == "__main__":
             if len(aes) == 0:
                 print('No legit aes left')
                 sys.exit()
-            print('Aes remaining:', *list(aeids))
-            difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(ensemble_labels) if l != -1], key=lambda x: (concatted_labels[~all_agree]==x).sum()/(concatted_labels==x).sum(),reverse=True)
-            print('difficults:',difficult_list)
-            worst3 = difficult_list[:3]
-            with ctx.Pool(processes=len(aes)) as pool:
-                print(f"Training aes {list(aeids)}...")
-
-                try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
-                except: set_trace()
-                num_labels = multihots.shape[1]
-                ensemble_labels = multihots.argmax(axis=1)
+            quot = multihots.sum(axis=-1)
+            print('Num all unknowns',(quot==0).sum())
+            quot += (quot==0) # Replace 0 entries with 1s
+            normalized_multihots = multihots/quot[:,None]
+            assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
+            num_labels = multihots.shape[1]
+            ensemble_labels = multihots.argmax(axis=1)
+            for aedict in copied_aes:
+                try: assert (aedict['ae'].pred.in_features == ARGS.NZ)
+                except: aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
+            if ARGS.worst3:
+                difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(ensemble_labels) if l != -1], key=lambda x: (concatted_labels[~all_agree]==x).sum()/(concatted_labels==x).sum(),reverse=True)
+                print('difficults:',difficult_list)
+                worst3 = difficult_list[:3]
                 for aedict in copied_aes:
-                    try: assert(aedict['ae'].pred.in_features == ARGS.NZ)
-                    except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-                quot = multihots.sum(axis=-1)
-                print('Num all unknowns',(quot==0).sum())
-                quot += (quot==0) # Replace 0 entries with 1s
-                normalized_multihots = multihots/quot[:,None]
-                filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,multihots=normalized_multihots,all_agree=all_agree,worst3=worst3)
+            else: worst3=None
+            filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,multihots=normalized_multihots,all_agree=all_agree,worst3=worst3)
+            with ctx.Pool(processes=len(aes)) as pool:
+                print(f"Training aes {list(aeids)}...")
                 [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
             aes = copied_aes
             assert set([ae['aeid'] for ae in aes]) == set(aeids)
