@@ -94,7 +94,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=None)
-    probs_for_usables = np.ones((len(vecs_and_labels),60000)) if ARGS.mask else np.stack([vecs_and_labels[aeid]['probs'] for aeid in usable_labels])
+    probs_for_usables = np.ones((len(same_lang_labels),60000)) if ARGS.mask else np.stack([vecs_and_labels[aeid]['probs'] for aeid in usable_labels])
     multihots = utils.compute_multihots(np.stack(same_lang_labels),probs_for_usables)
     assert multihots.shape[1] == ensemble_num_labels
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_labels))
@@ -365,7 +365,7 @@ if __name__ == "__main__":
             vecs = [filled_load_vecs(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
         assert all([v['latents'].shape[1] == ARGS.NZ for v in vecs])
 
-    from sklearn.metrics import normalized_mutual_info_score as mi
+    from sklearn.metrics import normalized_mutual_info_score as mi_func
     try: gt_labels = np.load(f'../{ARGS.dset}/labels/gt_labels.npy')
     except FileNotFoundError:
         d = utils.get_mnist_dset() if ARGS.dset == 'MNIST' else utils.get_fashionmnist_dset()
@@ -384,11 +384,11 @@ if __name__ == "__main__":
             labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels, aeids)
 
     if 4 in ARGS.sections:
-        scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
         concat_umap_start_time = time()
         if ARGS.conc:
             print('Umapping concatted vecs...')
+            scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
             umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
 
             print(f'Umap concat time: {utils.asMinutes(time()-concat_umap_start_time)}')
@@ -412,6 +412,7 @@ if __name__ == "__main__":
     if 5 in ARGS.sections:
         train_start_time = time()
         best_acc = 0.
+        best_mi = 0.
         count = 0
         num_agrees_list = []
         accs, mis = [], []
@@ -434,7 +435,7 @@ if __name__ == "__main__":
                 try: assert (aedict['ae'].pred.in_features == ARGS.NZ)
                 except: aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
             if ARGS.worst3:
-                difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(ensemble_labels) if l != -1], key=lambda x: (concatted_labels[~all_agree]==x).sum()/(concatted_labels==x).sum(),reverse=True)
+                difficult_list = [1,2,3] if ARGS.test else sorted([l for l in set(ensemble_labels) if l != -1], key=lambda x: (ensemble_labels[~all_agree]==x).sum()/(ensemble_labels==x).sum(),reverse=True)
                 print('difficults:',difficult_list)
                 worst3 = difficult_list[:3]
                 for aedict in copied_aes:
@@ -463,11 +464,12 @@ if __name__ == "__main__":
             ensemble_labels = multihots.argmax(1)
             acc = utils.accuracy(ensemble_labels,gt_labels)
             accs.append(acc)
-            mis.append(mi(ensemble_labels,gt_labels))
+            mi = mi_func(ensemble_labels,gt_labels)
+            mis.append(mi)
             new_best_acc = acc
             print('AE Scores:')
             print('Accs:', [utils.accuracy(v['labels'][v['labels']>=0],gt_labels[v['labels']>=0]) for v in vecs_and_labels.values()])
-            print('MIs:', [mi(v['labels'][v['labels']>=0],gt_labels[v['labels']>=0]) for v in vecs_and_labels.values()])
+            print('MIs:', [mi_func(v['labels'][v['labels']>=0],gt_labels[v['labels']>=0]) for v in vecs_and_labels.values()])
             if ARGS.conc:
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs.values()],axis=-1)
@@ -475,23 +477,25 @@ if __name__ == "__main__":
                 umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
                 concatted_labels = scanner.fit_predict(umapped_concats)
                 concat_acc = utils.accuracy(concatted_labels,gt_labels)
-                concat_mi = mi(concatted_labels,gt_labels)
+                concat_mi = mi_func(concatted_labels,gt_labels)
                 print('Concat Acc:', concat_acc)
                 print('Concat MI:', concat_mi)
             print('Ensemble Scores:')
             print('Acc histories:',accs)
             print('Acc agree:', utils.accuracy(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI histories:',mis)
-            print('NMI agree:',mi(ensemble_labels[all_agree],gt_labels[all_agree]))
+            print('NMI agree:',mi_func(ensemble_labels[all_agree],gt_labels[all_agree]))
             print(f'Meta Epoch time: {utils.asMinutes(time()-meta_epoch_start_time)}')
             if new_best_acc <= best_acc:
                 count += 1
             else:
                 best_acc = new_best_acc
+                best_mi = mi
                 count = 0
                 best_ensemble_labels = ensemble_labels
                 best_all_agree = all_agree
             print('Best acc:', best_acc)
+            print('Best MI:', best_mi)
             print('Count:',count)
             num_agrees_list.append(all_agree.sum())
             print(f'Num agrees list: {num_agrees_list}')
