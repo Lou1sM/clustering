@@ -1,20 +1,21 @@
+from datetime import datetime
+from fastai import datasets,layers
+from pdb import set_trace
+from scipy.optimize import linear_sum_assignment
+from scipy.special import comb, factorial
+from sklearn.metrics import adjusted_rand_score
+from torch.utils import data
+import math
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+import numpy as np
 import os
 import sys
-import math
-from pdb import set_trace
-from datetime import datetime
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import torch.nn as nn
 import torch
-import matplotlib.pyplot as plt
-from scipy.optimize import linear_sum_assignment
-import numpy as np
+import torch.nn as nn
 import torchvision.datasets as tdatasets
-from fastai import datasets,layers
 import umap.umap_ as umap
-from torch.utils import data
-from sklearn.metrics import adjusted_rand_score
 
 
 def reload():
@@ -544,6 +545,54 @@ def mlp(inp_size,hidden_size,outp_size,device):
 
 def num_labs(labels): return len(set([l for l in labels if l != -1]))
 def same_num_labs(labels1,labels2): num_labs(labels1) == num_labs(labels2)
+
+def cont_factorial(x): return (x/np.e)**x*(2*np.pi*x)**(1/2)*(1+1/(12*x))
+def cont_choose(ks): return cont_factorial(np.sum(ks))/np.prod([cont_factorial(k) for k in ks if k > 0])
+def prob_results_given_c(results,cluster,prior_correct):
+    assert len(results.shape) <= 1
+    prob = 1
+    results_normed = np.array(results)
+    results_normed = results_normed / np.sum(results_normed)
+    for c,r in enumerate(results_normed):
+        if c==cluster: prob_of_result = prior_correct**r
+        else: prob_of_result = ((1-prior_correct)/10)**r
+        prob *= prob_of_result
+    partitions = cont_choose(results_normed)
+    prob *= partitions
+    try:assert prob <= 1
+    except:set_trace()
+    return prob
+
+def prior_for_results(results,prior_correct):
+    probs = [prob_results_given_c(results,c,prior_correct) for c in range(10)]
+    set_trace()
+    return sum(probs)
+
+def all_conditionals(results,prior_correct):
+    cond_probs = [prob_results_given_c(results,c,prior_correct) for c in range(10)]
+    assert np.sum(cond_probs) < 1.01
+    return np.array(cond_probs)
+
+def posteriors(results,prior_correct):
+    conditionals = all_conditionals(results,prior_correct)
+    posterior_array = conditionals/np.sum(conditionals)
+    return posterior_array
+
+def posterior_corrects(results):
+    probs = []
+    for p in np.linspace(0.6,1.0,10):
+        conditional_prob = np.prod([np.sum(all_conditionals(r,p)) for r in results])
+        probs.append(conditional_prob)
+    probs = np.array(probs)
+    posterior_for_accs = 0.1*probs/np.sum(probs) # Prior was uniform over all accs in range
+    assert posterior_for_accs.max() < 1.01
+    return posterior_for_accs
+
+def votes_to_probs(multihots,prior_correct):
+    probs_list = [posteriors(r,prior_correct) for r in multihots]
+    probs_array = np.array(probs_list)
+    return probs_array
+
 
 if __name__ == "__main__":
     small_labels = np.array([1,2,3,4,0,4,4])
