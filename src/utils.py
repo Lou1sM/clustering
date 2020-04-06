@@ -482,7 +482,7 @@ def get_confusion_mat(labels1,labels2):
 
 def debable(labellings_list,pivot):
     labellings_list.sort(key=lambda x: x.max())
-    if pivot is None:
+    if pivot is 'none':
         pivot = labellings_list.pop(0)
         translated_list = [pivot]
     else:
@@ -493,10 +493,11 @@ def debable(labellings_list,pivot):
     return translated_list
 
 def compute_multihots(l,probs):
+    assert len(l) > 0
     mold = np.expand_dims(np.arange(l.max()+1),0) # (num_aes, num_labels)
     hits = (mold==np.expand_dims(l,2)) # (num_aes, dset_size, num_labels)
-    hits_with_probs = np.expand_dims(probs,2)*hits
-    multihots = hits_with_probs.sum(axis=0) # (dset_size, num_labels)
+    if probs is not 'none': hits = np.expand_dims(probs,2)*hits
+    multihots = hits.sum(axis=0) # (dset_size, num_labels)
     return multihots
 
 def check_latents(dec,latents,show,stacked):
@@ -549,13 +550,20 @@ def same_num_labs(labels1,labels2): num_labs(labels1) == num_labs(labels2)
 def cont_factorial(x): return (x/np.e)**x*(2*np.pi*x)**(1/2)*(1+1/(12*x))
 def cont_choose(ks): return cont_factorial(np.sum(ks))/np.prod([cont_factorial(k) for k in ks if k > 0])
 def prob_results_given_c(results,cluster,prior_correct):
+    """For single dpoint, prob of these results given right answer for cluster.
+    ARGS:
+        results (np.array): votes for this dpoint
+        cluster (int): right answer to condition on
+        prior_correct (\in (0,1)): guess for acc of each element of ensemble
+        """
+
     assert len(results.shape) <= 1
     prob = 1
     results_normed = np.array(results)
     results_normed = results_normed / np.sum(results_normed)
     for c,r in enumerate(results_normed):
         if c==cluster: prob_of_result = prior_correct**r
-        else: prob_of_result = ((1-prior_correct)/10)**r
+        else: prob_of_result = ((1-prior_correct)/results.shape[0])**r
         prob *= prob_of_result
     partitions = cont_choose(results_normed)
     prob *= partitions
@@ -564,16 +572,18 @@ def prob_results_given_c(results,cluster,prior_correct):
     return prob
 
 def prior_for_results(results,prior_correct):
-    probs = [prob_results_given_c(results,c,prior_correct) for c in range(10)]
+    probs = [prob_results_given_c(results,c,prior_correct) for c in range(results.shape[0])]
     set_trace()
     return sum(probs)
 
 def all_conditionals(results,prior_correct):
-    cond_probs = [prob_results_given_c(results,c,prior_correct) for c in range(10)]
+    """For each class, prob of results given that class."""
+    cond_probs = [prob_results_given_c(results,c,prior_correct) for c in range(len(results))]
     assert np.sum(cond_probs) < 1.01
     return np.array(cond_probs)
 
 def posteriors(results,prior_correct):
+    """Bayes to get prob of each class given these results."""
     conditionals = all_conditionals(results,prior_correct)
     posterior_array = conditionals/np.sum(conditionals)
     return posterior_array
@@ -589,7 +599,13 @@ def posterior_corrects(results):
     return posterior_for_accs
 
 def votes_to_probs(multihots,prior_correct):
-    probs_list = [posteriors(r,prior_correct) for r in multihots]
+    """For each dpoint, compute probs for each class, given these ensemble votes.
+    ARGS:
+        multihots (np.array): votes for each dpoint, size N x num_classes
+        prior_correct (\in (0,1)): guess for acc of each element of ensemble
+        """
+
+    probs_list = [np.ones(multihots.shape[-1])/multihots.shape[-1] if r.max() == 0 else posteriors(r,prior_correct) for r in multihots]
     probs_array = np.array(probs_list)
     return probs_array
 

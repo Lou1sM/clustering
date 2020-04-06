@@ -1,3 +1,4 @@
+import gc
 import signal
 import sys
 signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
@@ -93,7 +94,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     if pivot is not None and ensemble_num_labels == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
-        same_lang_labels = utils.debable(list(usable_labels.values()),pivot=None)
+        same_lang_labels = utils.debable(list(usable_labels.values()),pivot='none')
     probs_for_usables = np.stack([vecs_and_labels[aeid]['probs'] for aeid in usable_labels]) if args.use_probs else np.ones((len(same_lang_labels),60000))
     multihots = utils.compute_multihots(np.stack(same_lang_labels),probs_for_usables)
     assert multihots.shape[1] == ensemble_num_labels
@@ -126,7 +127,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         np.save(f'../{args.dset}/all_agree.npy', all_agree)
     return centroids_by_id, multihots, all_agree_hard, all_agree_soft
 
-def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets):
+def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets,all_agree,meta_epoch_num):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
@@ -152,7 +153,10 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets):
         if args.worst3:
             opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
             opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
-        targets = torch.tensor(targets,device='cuda')
+        try:targets = torch.tensor(targets,device='cuda')
+        except: set_trace()
+        smooth_lmbda = args.smooth_lmbda*min((meta_epoch_num/15)**2,1)
+        print('smooth',smooth_lmbda)
         for epoch in range(args.epochs):
             total_rloss = 0.
             total_loss = 0.
@@ -166,21 +170,26 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets):
                 try:enc_mid,latent  = ae.enc(xb)
                 except Exception as e:print(e); set_trace()
                 batch_targets = targets[idx,:]
+                mask = all_agree[idx]
                 dec_mid,rpred = ae.dec(utils.noiseify(latent,args.noise))
                 rloss = loss_func(rpred,xb).mean(dim=[1,2,3])
-                lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
-                gauss_loss_ = ce_loss_func(lin_pred,batch_targets)
+                try: lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
+                except: set_trace()
+                try: gauss_loss_ = ce_loss_func(lin_pred,batch_targets)
+                except: set_trace()
                 gauss_loss = torch.clamp(gauss_loss_,min=args.clamp_gauss_loss)
-                loss = gauss_loss.mean() + args.rlmbda*rloss.mean()
+                mask_loss = gauss_loss[mask].mean() + args.rlmbda*rloss[~mask].mean()
+                smooth_loss = gauss_loss.mean()
+                loss = mask_loss + smooth_lmbda*smooth_loss
                 if args.worst3:
-                    wor1 = (targets.argmax(1) == worst3[0])
-                    wor2 = (targets.argmax(1) == worst3[1])
-                    wor3 = (targets.argmax(1) == worst3[2])
+                    wor1 = (batch_targets.argmax(1) == worst3[0])
+                    wor2 = (batch_targets.argmax(1) == worst3[1])
+                    wor3 = (batch_targets.argmax(1) == worst3[2])
                     worstmask2 = (wor1 + wor2)
                     worstmask3 = (wor1 + wor2 + wor3)
                     try:
-                        worsttargets2 = targets[worstmask2][:,torch.tensor(worst3[:-1],device=device)]
-                        worsttargets3 = targets[worstmask3][:,torch.tensor(worst3,device=device)]
+                        worsttargets2 = batch_targets[worstmask2][:,torch.tensor(worst3[:-1],device=device)]
+                        worsttargets3 = batch_targets[worstmask3][:,torch.tensor(worst3,device=device)]
                     except Exception as e:
                         print(e)
                         set_trace()
@@ -200,6 +209,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets):
                     crloss_ = loss_func(crpred,xb[:]).mean(dim=[1,2,3])
                     loss += 0.1*(crloss_).mean()
                     total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
+                assert not (gauss_loss==gauss_loss_).all()
                 total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
                 total_gloss_ = total_gloss*((i+1)/(i+2)) + gauss_loss_.mean().item()*(1/(i+2))
                 total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
@@ -207,7 +217,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets):
                 loss.backward(); opt.step(); opt.zero_grad()
                 if args.test: break
             if args.test: break
-        print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss_: {round(total_gloss_,3)}, GaussLoss: {round(total_gloss_,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
+        print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss_: {round(total_gloss_,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
         for epoch in range(args.inter_epochs):
             epoch_loss = 0
             for i, (xb,yb,idx) in enumerate(dl):
@@ -279,6 +289,7 @@ if __name__ == "__main__":
     parser.add_argument('--save','-s',action='store_true')
     parser.add_argument('--sections',type=int,nargs='+',default=[5])
     parser.add_argument('--seed',type=int,default=0)
+    parser.add_argument('--smooth_lmbda',type=float,default=.1)
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--rlmbda',type=float,default=1.)
@@ -298,7 +309,7 @@ if __name__ == "__main__":
         ARGS.epochs = 1
         ARGS.inter_epochs = 1
         ARGS.pretrain_epochs = 1
-        ARGS.meta_epochs = 2
+        ARGS.max_meta_epochs = 2
 
     if ARGS.test and ARGS.save:
         print("shouldn't be saving for a test run")
@@ -418,6 +429,14 @@ if __name__ == "__main__":
         accs, mis = [], []
         ensemble_labels = multihots.argmax(-1)
         for meta_epoch_num in range(ARGS.max_meta_epochs):
+            mem_usage = 0
+            for obj in gc.get_objects():
+                try:
+                    if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                        mem_usage += obj.element_size()*obj.nelement()
+                except:
+                    pass
+            print('GPU Memory Usage:', mem_usage)
             meta_epoch_start_time = time()
             print('\nMeta epoch:', meta_epoch_num)
             if ARGS.discard_aes:
@@ -447,15 +466,20 @@ if __name__ == "__main__":
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
             else: worst3=None
             targets  = utils.votes_to_probs(multihots,prior_correct=.98)
-            filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,multihots=multihots,worst3=worst3,targets=targets)
+            filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,multihots=multihots,worst3=worst3,targets=targets,all_agree=all_agree_soft,meta_epoch_num=max(0,meta_epoch_num-5))
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Training aes {list(aeids)}...")
-                [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
+                try:
+                    [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
+                except: set_trace()
             aes = copied_aes
             assert set([ae['aeid'] for ae in aes]) == set(aeids)
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Generating vecs for {len(aes)} aes...")
-                vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
+                vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, aes)
+            concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
+            vecs.append({'aeid':'conc', 'latents':concatted_vecs})
+
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Labelling {len(aes)} aes...")
                 labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
@@ -486,11 +510,9 @@ if __name__ == "__main__":
                 print('Concat MI:', concat_mi)
             print('Ensemble Scores:')
             print('Acc histories:',accs)
-            print('Acc agree_hard:', round(utils.accuracy(ensemble_labels[all_agree_hard],gt_labels[all_agree_hard]),4))
-            print('Acc agree_soft:', round(utils.accuracy(ensemble_labels[all_agree_soft],gt_labels[all_agree_soft]),4))
+            print('Hard:', round(utils.accuracy(ensemble_labels[all_agree_hard],gt_labels[all_agree_hard]),4), round(mi_func(ensemble_labels[all_agree_hard],gt_labels[all_agree_hard]),4), all_agree_hard.sum())
+            print('Soft:', round(utils.accuracy(ensemble_labels[all_agree_soft],gt_labels[all_agree_soft]),4), round(mi_func(ensemble_labels[all_agree_soft],gt_labels[all_agree_soft]),4), all_agree_soft.sum())
             print('NMI histories:',mis)
-            print('NMI agree hard:',round(mi_func(ensemble_labels[all_agree_hard],gt_labels[all_agree_hard]),4))
-            print('NMI agree soft:',round(mi_func(ensemble_labels[all_agree_soft],gt_labels[all_agree_soft]),4))
             print(f'Meta Epoch time: {utils.asMinutes(time()-meta_epoch_start_time)}')
             if new_best_acc <= best_acc:
                 count += 1
