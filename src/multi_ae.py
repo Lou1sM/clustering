@@ -36,7 +36,6 @@ def pretrain_ae(ae_dict,args,should_change):
                 loss = loss_func(pred,xb).mean()
                 loss.backward(); opt.step(); opt.zero_grad()
                 total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
-                if i%10 == 0: print(loss.item())
                 if args.test: break
             print(f'Pretraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
             if args.test: break
@@ -67,38 +66,38 @@ def label_single(ae_output,args):
     aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
         print('Skipping umap and hdbscan')
-        latent_labels = np.tile(np.arange(10),6000)
+        labels = np.tile(np.arange(10),6000)
         umapped_latents = None
     else:
         print('Umapping latents...')
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
         print('Scanning latents...')
         latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-        latent_labels = latent_scanner.fit_predict(umapped_latents)
+        labels = latent_scanner.fit_predict(umapped_latents)
         if args.save:
-            np.save(f'../{args.dset}/labels/latent_labels{aeid}.npy',latent_labels)
+            np.save(f'../{args.dset}/labels/labels{aeid}.npy',labels)
             np.save(f'../{args.dset}/umaps/latent_umaps{aeid}.npy',umapped_latents)
-    return {'aeid':aeid,'umapped_latents':umapped_latents,'latent_labels':latent_labels}
+    return {'aeid':aeid,'umapped_latents':umapped_latents,'labels':labels}
 
 def build_ensemble(vecs_and_labels,args,pivot,given_gt):
-    nums_labels = [utils.get_num_labels(ae_results['latent_labels']) for ae_results in vecs_and_labels.values()]
+    nums_labels = [utils.get_num_labels(ae_results['labels']) for ae_results in vecs_and_labels.values()]
     counts = {x:nums_labels.count(x) for x in set(nums_labels)}
     ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[-1]
     print(f'All nums labels: {nums_labels}, ensemble num labels: {ensemble_num_labels}')
     assert given_gt is None or ensemble_num_labels == utils.get_num_labels(given_gt)
-    usable_latent_labels = {aeid:result['latent_labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['latent_labels']) == ensemble_num_labels}
+    usable_labels = {aeid:result['labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['labels']) == ensemble_num_labels}
     if pivot is not None and ensemble_num_labels == utils.num_labs(pivot):
-        same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=pivot)
+        same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
-        same_lang_labels = utils.debable(list(usable_latent_labels.values()),pivot=None)
+        same_lang_labels = utils.debable(list(usable_labels.values()),pivot=None)
     multihots = utils.ask_ensemble(np.stack(same_lang_labels))
-    all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_latent_labels))
+    all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_labels))
     ensemble_labels_ = multihots.argmax(axis=1)
     ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
     centroids_by_id = {}
     for aeid in vecs_and_labels.keys():
-        print(aeid, 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['latent_labels']))
-    for aeid in set(usable_latent_labels.keys()):
+        print(aeid, 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['labels']))
+    for aeid in set(usable_labels.keys()):
         new_centroid_info={'aeid':aeid}
         if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             print('No all agree vecs for centroids')
@@ -159,9 +158,9 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
             total_w3loss = 0.
             rloss_list = []
             for i, (xb,yb,idx) in enumerate(dl):
-                try:enc_mid,latent  = ae.enc(xb)
+                enc_mid,latent  = ae.enc(xb)
+                try:targets = ensemble_labels[idx]
                 except Exception as e:print(e); set_trace()
-                targets = ensemble_labels[idx]
                 wor1 = (targets == worst3[0])
                 wor2 = (targets == worst3[1])
                 wor3 = (targets == worst3[2])
@@ -231,9 +230,9 @@ def load_vecs(aeid,args):
     return {'aeid':aeid, 'latents':latents}
 
 def load_labels(aeid,args):
-    latent_labels = np.load(f'../{args.dset}/labels/latent_labels{aeid}.npy')
+    labels = np.load(f'../{args.dset}/labels/labels{aeid}.npy')
     umapped_latents = None
-    return {'aeid': aeid, 'umapped_latents':umapped_latents, 'latent_labels': latent_labels}
+    return {'aeid': aeid, 'umapped_latents':umapped_latents, 'labels': labels}
 
 def load_ensemble(aeids,args):
     centroids_by_id = {}
@@ -269,6 +268,7 @@ if __name__ == "__main__":
     parser.add_argument('--save','-s',action='store_true')
     parser.add_argument('--sections',type=int,nargs='+')
     parser.add_argument('--seed',type=int,default=0)
+    parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--test','-t',action='store_true')
@@ -299,6 +299,13 @@ if __name__ == "__main__":
         assert len(ARGS.ae_range) == 2
         aeids = range(ARGS.ae_range[0],ARGS.ae_range[1])
     ctx = mp.get_context("spawn")
+
+    if ARGS.short_epochs:                                                       
+        ARGS.pretrain_epochs = 1                                                
+        ARGS.epochs = 1                                                         
+        ARGS.inter_epochs = 1                                                   
+        ARGS.pretrain_epochs = 1                                                
+        ARGS.meta_epochs = 2
 
     filled_pretrain = partial(pretrain_ae,args=ARGS,should_change=True)
     filled_generate = partial(generate_vecs_single,args=ARGS)
@@ -333,12 +340,14 @@ if __name__ == "__main__":
         generate_start_time = time()
         with ctx.Pool(processes=len(aes)) as pool:
             print(f"Generating vecs for {len(aes)} aes...")
-            vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
+            with torch.cuda.device(device):
+                vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
         print(f'Generation time: {utils.asMinutes(time()-generate_start_time)}')
     elif 3 in ARGS.sections or 4 in ARGS.sections:
         with ctx.Pool(processes=len(aes)) as pool:
             print(f"Loading vecs for {len(aes)} aes...")
-            vecs = [filled_load_vecs(aeid) for ae in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
+            with torch.cuda.device(device):
+                vecs = [filled_load_vecs(aeid) for ae in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
         assert all([v['latents'].shape[1] == ARGS.NZ for v in vecs])
 
     from sklearn.metrics import normalized_mutual_info_score as mi
@@ -363,8 +372,8 @@ if __name__ == "__main__":
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
         concat_umap_start_time = time()
-        if ARGS.test: concat_labels = labels[0]['latent_labels']
-        elif len(labels) == 1: concatted_labels = labels[0]['latent_labels']
+        if ARGS.test: concat_labels = labels[0]['labels']
+        elif len(labels) == 1: concatted_labels = labels[0]['labels']
         else:
             print('Umapping concatted vecs...')
             umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
@@ -393,7 +402,7 @@ if __name__ == "__main__":
         for meta_epoch_num in range(ARGS.max_meta_epochs):
             meta_epoch_start_time = time()
             print('\nMeta epoch:', meta_epoch_num)
-            copied_aes = [copy.deepcopy(ae) for ae in aes]
+            copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid':ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
             if len(aes) == 0:
                 print('No legit aes left')
                 sys.exit()
@@ -421,8 +430,9 @@ if __name__ == "__main__":
                 vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Generating labels for {len(aes)} aes...")
-                labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
-            if len(labels) == 1 or ARGS.test: concatted_labels = labels[0]['latent_labels']
+                with torch.cuda.device(device):
+                    labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+            if len(labels) == 1 or ARGS.test: concatted_labels = labels[0]['labels']
             else:
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
@@ -432,15 +442,16 @@ if __name__ == "__main__":
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
             print(f"Building ensemble from {len(aes)} aes...")
-            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=None,given_gt=None)
+            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=ensemble_labels,given_gt=None)
+            print(ensemble_labels)
             copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
 
             acc = utils.accuracy(ensemble_labels,gt_labels)
             concat_acc = utils.accuracy(concatted_labels,gt_labels)
             new_best_acc = max(acc,concat_acc)
             print('AE Scores:')
-            print('L acc', [utils.accuracy(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
-            print('L MI', [mi(labels[x]['latent_labels'][labels[x]['latent_labels']>=0],gt_labels[labels[x]['latent_labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
+            print('L acc', [utils.accuracy(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
+            print('L MI', [mi(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
             print('Ensemble Scores:')
             print('Acc:',acc)
             print('Concat Acc:', concat_acc)
