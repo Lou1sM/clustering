@@ -65,13 +65,10 @@ def generate_vecs_single(ae_dict,args):
 def label_single(ae_output,args):
     aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
-        print('Skipping umap and hdbscan')
         labels = np.tile(np.arange(10),6000)
         umapped_latents = None
     else:
-        print('Umapping latents...')
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
-        print('Scanning latents...')
         latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
         labels = latent_scanner.fit_predict(umapped_latents)
         if args.save:
@@ -95,10 +92,9 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     ensemble_labels_ = multihots.argmax(axis=1)
     ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
     centroids_by_id = {}
-    for aeid in vecs_and_labels.keys():
-        print(aeid, 'num_latents:',utils.get_num_labels(vecs_and_labels[aeid]['labels']))
     for aeid in set(usable_labels.keys()):
         new_centroid_info={'aeid':aeid}
+        if aeid == 'concat': continue
         if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             print('No all agree vecs for centroids')
             print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
@@ -192,7 +188,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
                             set_trace()
                     else:
                         w2loss = w3loss = torch.tensor(0.,device=device)
-                    closs = 0.1*(crloss_).mean() + torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + 0.1*rloss.mean() + w2loss.mean() + w3loss.mean()
+                    closs = 0.1*(crloss_).mean() + torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + args.rlmbda*rloss.mean() + w2loss.mean() + w3loss.mean()
                     total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
                     total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
                     total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
@@ -253,7 +249,7 @@ def load_ensemble(aeids,args):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--ae_range',type=int,nargs='+')
     group.add_argument('--aeids',type=int,nargs='+')
     group.add_argument('--num_aes',type=int)
@@ -274,6 +270,7 @@ if __name__ == "__main__":
     parser.add_argument('--noise',type=float,default=1.5)
     parser.add_argument('--patience',type=int,default=7)
     parser.add_argument('--pretrain_epochs',type=int,default=10)
+    parser.add_argument('--rlmbda',type=float,default=.1)
     parser.add_argument('--save','-s',action='store_true')
     parser.add_argument('--sections',type=int,nargs='+')
     parser.add_argument('--seed',type=int,default=0)
@@ -301,9 +298,11 @@ if __name__ == "__main__":
         aeids = ARGS.aeids
     elif ARGS.num_aes is not None:
         aeids = range(ARGS.num_aes)
-    else:
+    elif ARGS.ae_range is not None:
         assert len(ARGS.ae_range) == 2
         aeids = range(ARGS.ae_range[0],ARGS.ae_range[1])
+    else:
+        aeids = [0,1]
     ctx = mp.get_context("spawn")
 
     if ARGS.short_epochs:                                                       
@@ -437,22 +436,9 @@ if __name__ == "__main__":
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Generating vecs for {len(aes)} aes...")
                 vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
-            with ctx.Pool(processes=len(aes)) as pool:
-                print(f"Generating labels for {len(aes)} aes...")
-                with torch.cuda.device(device):
-                    labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
-            if len(labels) == 1 or ARGS.test: concatted_labels = labels[0]['labels']
-            else:
-                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-                concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-                umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
-                concatted_labels = scanner.fit_predict(umapped_concats)
-            vecs = utils.dictify_list(vecs,key='aeid')
-            labels = utils.dictify_list(labels,key='aeid')
-            vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
             if ARGS.conc:                                                       
                 scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500) 
-                concatted_vecs = np.concatenate([v['latents'] for v in vecs.values()],axis=-1)
+                concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
                 print('Umapping concatted vecs...')                             
                 umapped_concats = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(concatted_vecs)
                 concatted_labels = scanner.fit_predict(umapped_concats)         
@@ -460,24 +446,30 @@ if __name__ == "__main__":
                 concat_mi = rmi_func(concatted_labels,gt_labels)                 
                 print('Concat Acc:', concat_acc)                                
                 print('Concat MI:', concat_mi)
+                vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
+            with ctx.Pool(processes=len(aes)) as pool:
+                print(f"Generating labels for {len(aes)} aes...")
+                with torch.cuda.device(device):
+                    print(f"Labelling vecs for {len(aes)} aes...")
+                    labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+            vecs = utils.dictify_list(vecs,key='aeid')
+            labels = utils.dictify_list(labels,key='aeid')
+            vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
             print(f"Building ensemble from {len(aes)} aes...")
             centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=ensemble_labels,given_gt=None)
             print(ensemble_labels)
-            #copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid': ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
 
             acc = racc(ensemble_labels,gt_labels)
             mi = rmi_func(ensemble_labels,gt_labels)
             acc_histories.append(acc)
             mi_histories.append(mi)
             num_agree_histories.append(all_agree.sum())
-            concat_acc = racc(concatted_labels,gt_labels)
-            new_best_acc = max(acc,concat_acc)
+            new_best_acc = acc
             print('AE Scores:')
             print('L acc', [racc(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
             print('L MI', [rmi_func(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
             print('Ensemble Scores:')
             print('Acc:',acc)
-            print('Concat Acc:', concat_acc)
             print('Acc agree:', racc(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi)
             print('NMI agree:',rmi_func(ensemble_labels[all_agree],gt_labels[all_agree]))
