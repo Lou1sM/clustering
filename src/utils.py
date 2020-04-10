@@ -1,20 +1,21 @@
+from datetime import datetime
+from fastai import datasets,layers
+from pdb import set_trace
+from scipy.optimize import linear_sum_assignment
+from scipy.special import comb, factorial
+from sklearn.metrics import adjusted_rand_score
+from torch.utils import data
+import math
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+import numpy as np
 import os
 import sys
-import math
-from pdb import set_trace
-from datetime import datetime
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import torch.nn as nn
 import torch
-import matplotlib.pyplot as plt
-from scipy.optimize import linear_sum_assignment
-import numpy as np
+import torch.nn as nn
 import torchvision.datasets as tdatasets
-from fastai import datasets,layers
 import umap.umap_ as umap
-from torch.utils import data
-from sklearn.metrics import adjusted_rand_score
 
 
 def reload():
@@ -421,6 +422,7 @@ def check_ae_images(enc,dec,dataset,num_rows=5,stacked=False):
     x = enc(inimgs)[-1] if stacked else enc(inimgs)
     outimgs = dec(x)[-1] if stacked else dec(x)
     _, axes = plt.subplots(num_rows,4,figsize=(7,7))
+    inimgs, outimgs = inimgs.detach().cpu(), outimgs.detach().cpu()
     for i in range(num_rows):
         axes[i,0].imshow(inimgs[i,0])
         axes[i,1].imshow(outimgs[i,0])
@@ -439,18 +441,33 @@ def label_assignment_cost(labels1,labels2,label1,label2):
 
 def translate_labellings(trans_from_labels,trans_to_labels):
     # What you're translating into has to be compressed, otherwise gives wrong results
-    try:
-        unique_from_labs =  set(trans_from_labels) if isinstance(trans_from_labels,np.ndarray) else trans_from_labels.unique()
-        unique_to_labs =  set(trans_to_labels) if isinstance(trans_to_labels,np.ndarray) else trans_to_labels.unique()
-        num_from_labs =  len([i for i in unique_from_labs if i != -1])
-        num_to_labs =  len([i for i in unique_to_labs if i != -1])
-        if num_from_labs != num_to_labs:
-            print(f'Different numbers of labels {num_from_labs} and {num_to_labs}, should\'nt be comparing')
-    except: set_trace()
+    unique_from_labs =  set(trans_from_labels) if isinstance(trans_from_labels,np.ndarray) else trans_from_labels.unique()
+    unique_to_labs =  set(trans_to_labels) if isinstance(trans_to_labels,np.ndarray) else trans_to_labels.unique()
+    num_from_labs =  len([i for i in unique_from_labs if i != -1])
+    num_to_labs =  len([i for i in unique_to_labs if i != -1])
+    if num_from_labs <= num_to_labs:
+        return translate_labellings_fanout(trans_from_labels,trans_to_labels)
+    else:
+        return translate_labellings_fanin(trans_from_labels,trans_to_labels)
+
+def translate_labellings_fanout(trans_from_labels,trans_to_labels):
     cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
-    return np.array([col_ind[l] for l in trans_from_labels])
+    return np.array([-1 if l == -1 else col_ind[l] for l in trans_from_labels])
+
+def translate_labellings_fanin(trans_from_labels,trans_to_labels):
+    cost_matrix = np.array([[label_assignment_cost(trans_to_labels,trans_from_labels,l1,l2) for l2 in set(trans_from_labels) if l2 != -1] for l1 in set(trans_to_labels) if l1 != -1])
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    assert len(col_ind) == get_num_labels(trans_to_labels)
+    untranslated = [i for i in range(cost_matrix.shape[1]) if i not in col_ind]
+    cost_matrix2 = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(untranslated) if l1 != -1])
+    row_ind2, col_ind2 = linear_sum_assignment(cost_matrix2)
+    cl = col_ind.tolist()
+    trans_dict = {f:cl.index(f) for f in cl}
+    for u,t in zip(untranslated,col_ind2): trans_dict[u]=t
+    trans_dict[-1] = -1
+    return np.array([trans_dict[i] for i in trans_from_labels])
 
 def get_confusion_mat(labels1,labels2):
     if max(labels1) != max(labels2):
@@ -464,8 +481,8 @@ def get_confusion_mat(labels1,labels2):
     return confusion_matrix
 
 def debable(labellings_list,pivot):
-    labellings_list.sort(key=lambda x: x.max(),reverse=True)
-    if pivot is None:
+    labellings_list.sort(key=lambda x: x.max())
+    if pivot is 'none':
         pivot = labellings_list.pop(0)
         translated_list = [pivot]
     else:
@@ -475,7 +492,13 @@ def debable(labellings_list,pivot):
         translated_list.append(not_lar_translated)
     return translated_list
 
-def ask_ensemble(l): return (np.expand_dims(np.arange(l.max()+1),0)==np.expand_dims(l,2)).sum(axis=0)
+def compute_multihots(l,probs):
+    assert len(l) > 0
+    mold = np.expand_dims(np.arange(l.max()+1),0) # (num_aes, num_labels)
+    hits = (mold==np.expand_dims(l,2)) # (num_aes, dset_size, num_labels)
+    if probs is not 'none': hits = np.expand_dims(probs,2)*hits
+    multihots = hits.sum(axis=0) # (dset_size, num_labels)
+    return multihots
 
 def check_latents(dec,latents,show,stacked):
     _, axes = plt.subplots(6,2,figsize=(7,7))
@@ -500,9 +523,12 @@ def dictify_list(x,key):
 
 def accuracy(labels1,labels2):
     try:
-        trans_labels = translate_labellings(labels1,labels2)
+        trans_labels = translate_labellings(compress_labels(labels1),compress_labels(labels2))
         return sum(trans_labels==labels2)/len(labels1)
-    except:
+    except Exception as e:
+        print(e)
+        set_trace()
+        trans_labels = translate_labellings(labels1,labels2)
         print("Couldn't compute accuracy by translating, returning adjusted_rand_score instead")
         return adjusted_rand_score(labels1,labels2)
 
@@ -520,3 +546,73 @@ def mlp(inp_size,hidden_size,outp_size,device):
 
 def num_labs(labels): return len(set([l for l in labels if l != -1]))
 def same_num_labs(labels1,labels2): num_labs(labels1) == num_labs(labels2)
+
+def cont_factorial(x): return (x/np.e)**x*(2*np.pi*x)**(1/2)*(1+1/(12*x))
+def cont_choose(ks): return cont_factorial(np.sum(ks))/np.prod([cont_factorial(k) for k in ks if k > 0])
+def prob_results_given_c(results,cluster,prior_correct):
+    """For single dpoint, prob of these results given right answer for cluster.
+    ARGS:
+        results (np.array): votes for this dpoint
+        cluster (int): right answer to condition on
+        prior_correct (\in (0,1)): guess for acc of each element of ensemble
+        """
+
+    assert len(results.shape) <= 1
+    prob = 1
+    results_normed = np.array(results)
+    results_normed = results_normed / np.sum(results_normed)
+    for c,r in enumerate(results_normed):
+        if c==cluster: prob_of_result = prior_correct**r
+        else: prob_of_result = ((1-prior_correct)/results.shape[0])**r
+        prob *= prob_of_result
+    partitions = cont_choose(results_normed)
+    prob *= partitions
+    try:assert prob <= 1
+    except:set_trace()
+    return prob
+
+def prior_for_results(results,prior_correct):
+    probs = [prob_results_given_c(results,c,prior_correct) for c in range(results.shape[0])]
+    set_trace()
+    return sum(probs)
+
+def all_conditionals(results,prior_correct):
+    """For each class, prob of results given that class."""
+    cond_probs = [prob_results_given_c(results,c,prior_correct) for c in range(len(results))]
+    assert np.sum(cond_probs) < 1.01
+    return np.array(cond_probs)
+
+def posteriors(results,prior_correct):
+    """Bayes to get prob of each class given these results."""
+    conditionals = all_conditionals(results,prior_correct)
+    posterior_array = conditionals/np.sum(conditionals)
+    return posterior_array
+
+def posterior_corrects(results):
+    probs = []
+    for p in np.linspace(0.6,1.0,10):
+        conditional_prob = np.prod([np.sum(all_conditionals(r,p)) for r in results])
+        probs.append(conditional_prob)
+    probs = np.array(probs)
+    posterior_for_accs = 0.1*probs/np.sum(probs) # Prior was uniform over all accs in range
+    assert posterior_for_accs.max() < 1.01
+    return posterior_for_accs
+
+def votes_to_probs(multihots,prior_correct):
+    """For each dpoint, compute probs for each class, given these ensemble votes.
+    ARGS:
+        multihots (np.array): votes for each dpoint, size N x num_classes
+        prior_correct (\in (0,1)): guess for acc of each element of ensemble
+        """
+
+    probs_list = [np.ones(multihots.shape[-1])/multihots.shape[-1] if r.max() == 0 else posteriors(r,prior_correct) for r in multihots]
+    probs_array = np.array(probs_list)
+    return probs_array
+
+
+if __name__ == "__main__":
+    small_labels = np.array([1,2,3,4,0,4,4])
+    big_labels = np.array([0,1,2,3,4,5,5])
+    print(translate_labellings(big_labels,small_labels))
+    print(translate_labellings(small_labels,big_labels))
+    print(translate_labellings(big_labels,big_labels))

@@ -87,7 +87,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=None)
-    multihots = utils.ask_ensemble(np.stack(same_lang_labels))
+    multihots = utils.compute_multihots(np.stack(same_lang_labels),probs='none')
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_labels))
     ensemble_labels_ = multihots.argmax(axis=1)
     ensemble_labels = given_gt if given_gt is not None else ensemble_labels_
