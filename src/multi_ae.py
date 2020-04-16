@@ -45,6 +45,8 @@ def pretrain_ae(ae_dict,args,should_change):
             for b,a in zip(befores,afters): assert not (b==a).all()
     if args.save: 
         utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints',f'pt{aeid}.pt')
+    if args.vis_pretrain:
+        utils.check_ae_images(ae.enc, ae.dec, dset)
 
 def generate_vecs_single(ae_dict,args):
     aeid, ae = ae_dict['aeid'],ae_dict['ae']
@@ -90,7 +92,6 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     if pivot is not 'none' and ensemble_num_labels == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
-        set_trace()
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot='none')
     multihots = utils.compute_multihots(np.stack(same_lang_labels),probs='none')
     all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_labels))
@@ -269,12 +270,14 @@ if __name__ == "__main__":
     parser.add_argument('--pretrain_epochs',type=int,default=10)
     parser.add_argument('--rlmbda',type=float,default=1.)
     parser.add_argument('--save','-s',action='store_true')
+    parser.add_argument('--scatter_clusters',action='store_true')
     parser.add_argument('--sections',type=int,nargs='+')
     parser.add_argument('--seed',type=int,default=0)
     parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--test','-t',action='store_true')
+    parser.add_argument('--vis_pretrain',action='store_true')
     parser.add_argument('--worst3',action='store_true')
     ARGS = parser.parse_args()
     print(ARGS)
@@ -447,6 +450,9 @@ if __name__ == "__main__":
                 with torch.cuda.device(device):
                     print(f"Labelling vecs for {len(aes)} aes...")
                     labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+            if ARGS.scatter_clusters:
+                selected = random.choice(labels)['umapped_latents']
+                utils.scatter_clusters(selected, gt_labels,show=True)
             vecs = utils.dictify_list(vecs,key='aeid')
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
