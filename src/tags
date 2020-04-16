@@ -1,74 +1,42 @@
-AE	utils_old.py	/^class AE(nn.Module):$/
 AE	utils.py	/^class AE(nn.Module):$/
-Dataholder	utils_old.py	/^class Dataholder():$/
 Dataholder	utils.py	/^class Dataholder():$/
-EncoderStacked	utils_old.py	/^class EncoderStacked(nn.Module):$/
 EncoderStacked	utils.py	/^class EncoderStacked(nn.Module):$/
-Generator	utils_old.py	/^class Generator(nn.Module):$/
 Generator	utils.py	/^class Generator(nn.Module):$/
-GeneratorStacked	utils_old.py	/^class GeneratorStacked(nn.Module):$/
 GeneratorStacked	utils.py	/^class GeneratorStacked(nn.Module):$/
-KwargTransformDataset	utils_old.py	/^class KwargTransformDataset(data.Dataset):$/
 KwargTransformDataset	utils.py	/^class KwargTransformDataset(data.Dataset):$/
-NonsenseDiscriminator	utils_old.py	/^class NonsenseDiscriminator(nn.Module):$/
 NonsenseDiscriminator	utils.py	/^class NonsenseDiscriminator(nn.Module):$/
-SuperAE	utils_old.py	/^class SuperAE(nn.Module):$/
 SuperAE	utils.py	/^class SuperAE(nn.Module):$/
-TransformDataset	utils_old.py	/^class TransformDataset(data.Dataset):$/
 TransformDataset	utils.py	/^class TransformDataset(data.Dataset):$/
-__getitem__	utils_old.py	/^    def __getitem__(self,idx):$/
-__getitem__	utils_old.py	/^    def __getitem__(self,idx):$/
 __getitem__	utils.py	/^    def __getitem__(self,idx):$/
 __getitem__	utils.py	/^    def __getitem__(self,idx):$/
-__init__	utils_old.py	/^    def __init__(self,enc,dec,identifier):$/
-__init__	utils_old.py	/^    def __init__(self):$/
-__init__	utils_old.py	/^    def __init__(self, nz,ngf,nc,dropout_p=0.):$/
-__init__	utils_old.py	/^    def __init__(self, nz,ngf,nc,dropout_p=0.):$/
-__init__	utils_old.py	/^    def __init__(self,block1,block2):$/
-__init__	utils_old.py	/^    def __init__(self,train_data,train_labels): se/
-__init__	utils_old.py	/^    def __init__(self,data,transforms,x_only,devic/
-__init__	utils_old.py	/^    def __init__(self,transforms,device,**kwdata):/
-__init__	utils_old.py	/^    def __init__(self,num_aes,latent_size,device):/
 __init__	utils.py	/^    def __init__(self,enc,dec,identifier):$/
 __init__	utils.py	/^    def __init__(self):$/
 __init__	utils.py	/^    def __init__(self, nz,ngf,nc,dropout_p=0.):$/
-__init__	utils.py	/^    def __init__(self, nz,ngf,nc,dropout_p=0.):$/
+__init__	utils.py	/^    def __init__(self, nz, ngf, nc, output_size, d/
 __init__	utils.py	/^    def __init__(self,block1,block2):$/
 __init__	utils.py	/^    def __init__(self,train_data,train_labels): se/
 __init__	utils.py	/^    def __init__(self,data,transforms,x_only,devic/
 __init__	utils.py	/^    def __init__(self,transforms,device,**kwdata):/
 __init__	utils.py	/^    def __init__(self,num_aes,latent_size,device):/
-__len__	utils_old.py	/^    def __len__(self): return len(self.data) if se/
-__len__	utils_old.py	/^    def __len__(self): return len(getattr(self,sel/
 __len__	utils.py	/^    def __len__(self): return len(self.data) if se/
 __len__	utils.py	/^    def __len__(self): return len(getattr(self,sel/
-_comp	utils_old.py	/^    def _comp(x):$/
 _comp	utils.py	/^    def _comp(x):$/
-accuracy	utils_old.py	/^def accuracy(labels1,labels2):$/
 accuracy	utils.py	/^def accuracy(labels1,labels2):$/
-add_colour_dimension	utils_old.py	/^def add_colour_dimension(item): return item.unsque/
 add_colour_dimension	utils.py	/^def add_colour_dimension(item): return item.unsque/
 all_conditionals	test.py	/^def all_conditionals(results,prior_correct):$/
 all_conditionals	utils.py	/^def all_conditionals(results,prior_correct):$/
-asMinutes	utils_old.py	/^def asMinutes(s):$/
 asMinutes	utils.py	/^def asMinutes(s):$/
-ask_ensemble	utils_old.py	/^def ask_ensemble(l): return (np.expand_dims(np.ara/
 bakers	test.py	/^def bakers(x): $/
 binary_conditional_mi	test.py	/^def binary_conditional_mi(ensemble_votes):$/
 build_ensemble	min_ex.py	/^def build_ensemble(vecs_and_labels):$/
 build_ensemble	multi_ae.py	/^def build_ensemble(vecs_and_labels,args,pivot,give/
 by_label	inspect_errors.py	/^def by_label(x):$/
-check_ae_images	utils_old.py	/^def check_ae_images(enc,dec,dataset):$/
-check_ae_images	utils_old.py	/^def check_ae_images(enc,dec,dataset,num_rows=5,sta/
 check_ae_images	utils.py	/^def check_ae_images(enc,dec,dataset):$/
 check_ae_images	utils.py	/^def check_ae_images(enc,dec,dataset,num_rows=5,sta/
-check_latents	utils_old.py	/^def check_latents(dec,latents,show,stacked):$/
+check_dir	utils.py	/^def check_dir(directory):$/
 check_latents	utils.py	/^def check_latents(dec,latents,show,stacked):$/
-check_ohe_latents	utils_old.py	/^def check_ohe_latents(dec,t):$/
 check_ohe_latents	utils.py	/^def check_ohe_latents(dec,t):$/
-compose	utils_old.py	/^def compose(funcs):$/
 compose	utils.py	/^def compose(funcs):$/
-compress_labels	utils_old.py	/^def compress_labels(labels):$/
 compress_labels	utils.py	/^def compress_labels(labels):$/
 compute_multihots	utils.py	/^def compute_multihots(l,probs):$/
 cont_choose	test.py	/^def cont_choose(ks): return cont_factorial(np.sum(/
@@ -76,31 +44,17 @@ cont_choose	utils.py	/^def cont_choose(ks): return cont_factorial(np.sum(/
 cont_choose3	test.py	/^def cont_choose3(ks):$/
 cont_factorial	test.py	/^def cont_factorial(x): return (x\/np.e)**x*(2*np.pi/
 cont_factorial	utils.py	/^def cont_factorial(x): return (x\/np.e)**x*(2*np.pi/
-debable	utils_old.py	/^def debable(labellings_list,pivot):$/
 debable	utils.py	/^def debable(labellings_list,pivot):$/
-decode_all	utils_old.py	/^    def decode_all(self,x):$/
 decode_all	utils.py	/^    def decode_all(self,x):$/
-decode_list	utils_old.py	/^    def decode_list(self,latent_list):$/
 decode_list	utils.py	/^    def decode_list(self,latent_list):$/
-device	utils_old.py	/^    def device(self):$/
-device	utils_old.py	/^    def device(self):$/
 device	utils.py	/^    def device(self):$/
 device	utils.py	/^    def device(self):$/
-dictify_list	utils_old.py	/^def dictify_list(x,key):$/
 dictify_list	utils.py	/^def dictify_list(x,key):$/
-duplicate_dim	utils_old.py	/^def duplicate_dim(enc,dec,lin,idx):$/
 duplicate_dim	utils.py	/^def duplicate_dim(enc,dec,lin,idx):$/
-encode	utils_old.py	/^    def encode(self,x):$/
 encode	utils.py	/^    def encode(self,x):$/
 find_overlap	test.py	/^def find_overlap(ks,y):$/
-first_row	utils_old.py	/^    def first_row(self):$/
 first_row	utils.py	/^    def first_row(self):$/
 fit_exponent	test.py	/^def fit_exponent(x,y):$/
-forward	utils_old.py	/^    def forward(self,inp_):$/
-forward	utils_old.py	/^    def forward(self, inp):$/
-forward	utils_old.py	/^    def forward(self,inp):$/
-forward	utils_old.py	/^    def forward(self,inp):$/
-forward	utils_old.py	/^    def forward(self,x):$/
 forward	utils.py	/^    def forward(self,inp_):$/
 forward	utils.py	/^    def forward(self, inp):$/
 forward	utils.py	/^    def forward(self,inp):$/
@@ -108,34 +62,21 @@ forward	utils.py	/^    def forward(self,inp):$/
 forward	utils.py	/^    def forward(self,x):$/
 generate_vecs_single	min_ex.py	/^def generate_vecs_single(ae_dict,test):$/
 generate_vecs_single	multi_ae.py	/^def generate_vecs_single(ae_dict,args):$/
-get_confusion_mat	utils_old.py	/^def get_confusion_mat(labels1,labels2):$/
 get_confusion_mat	utils.py	/^def get_confusion_mat(labels1,labels2):$/
-get_datetime_stamp	utils_old.py	/^def get_datetime_stamp(): return str(datetime.now(/
 get_datetime_stamp	utils.py	/^def get_datetime_stamp(): return str(datetime.now(/
-get_dloader	utils_old.py	/^def get_dloader(raw_data,x_only,batch_size,device,/
 get_dloader	utils.py	/^def get_dloader(raw_data,x_only,batch_size,device,/
-get_dset	utils_old.py	/^def get_dset(raw_data,x_only,device,tfms=None):$/
 get_dset	utils.py	/^def get_dset(raw_data,x_only,device,tfms=None):$/
-get_enc_blocks	utils_old.py	/^def get_enc_blocks(device, latent_size):$/
 get_enc_blocks	utils.py	/^def get_enc_blocks(device, latent_size):$/
-get_enc_dec	utils_old.py	/^def get_enc_dec(device, latent_size):$/
 get_enc_dec	utils.py	/^def get_enc_dec(device, latent_size):$/
-get_far_tensor	utils_old.py	/^def get_far_tensor(exemplars_tensor):$/
 get_far_tensor	utils.py	/^def get_far_tensor(exemplars_tensor):$/
-get_fashionmnist_dset	utils_old.py	/^def get_fashionmnist_dset(device='cuda',x_only=Fal/
 get_fashionmnist_dset	utils.py	/^def get_fashionmnist_dset(device='cuda',x_only=Fal/
-get_mnist_dloader	utils_old.py	/^def get_mnist_dloader(x_only=False,device='cuda',b/
 get_mnist_dloader	utils.py	/^def get_mnist_dloader(x_only=False,device='cuda',b/
-get_mnist_dset	utils_old.py	/^def get_mnist_dset(device='cuda',x_only=False):$/
 get_mnist_dset	utils.py	/^def get_mnist_dset(device='cuda',x_only=False):$/
-get_num_labels	utils_old.py	/^def get_num_labels(labels):$/
 get_num_labels	utils.py	/^def get_num_labels(labels):$/
-get_reslike_block	utils_old.py	/^def get_reslike_block(nfs,sz):$/
 get_reslike_block	utils.py	/^def get_reslike_block(nfs,sz):$/
-get_user_yesno_answer	utils_old.py	/^def get_user_yesno_answer(question):$/
 get_user_yesno_answer	utils.py	/^def get_user_yesno_answer(question):$/
+get_vision_dset	utils.py	/^def get_vision_dset(dset_name,device='cuda',x_only/
 include_exclude	test.py	/^def include_exclude(ensemble_size, binary_overlap)/
-label_assignment_cost	utils_old.py	/^def label_assignment_cost(labels1,labels2,label1,l/
 label_assignment_cost	utils.py	/^def label_assignment_cost(labels1,labels2,label1,l/
 label_single	min_ex.py	/^def label_single(ae_output,test):$/
 label_single	multi_ae.py	/^def label_single(ae_output,args):$/
@@ -148,71 +89,50 @@ load_labels	multi_ae.py	/^def load_labels(aeid,args):$/
 load_vecs	min_ex.py	/^def load_vecs(aeid):$/
 load_vecs	min_ex.py	/^def load_vecs(aeid):$/
 load_vecs	multi_ae.py	/^def load_vecs(aeid,args):$/
-make_ae	utils_old.py	/^def make_ae(aeid,device,NZ):$/
-make_ae	utils.py	/^def make_ae(aeid,device,NZ):$/
-mlp	utils_old.py	/^def mlp(inp_size,hidden_size,outp_size,device):$/
+make_ae	utils.py	/^def make_ae(aeid,device,NZ,image_size):$/
 mlp	utils.py	/^def mlp(inp_size,hidden_size,outp_size,device):$/
-noiseify	utils_old.py	/^def noiseify(pytensor,constant):$/
 noiseify	utils.py	/^def noiseify(pytensor,constant):$/
-normalize	utils_old.py	/^def normalize(t): return t\/t.norm()$/
 normalize	utils.py	/^def normalize(t): return t\/t.norm()$/
-normalize_leaf	utils_old.py	/^def normalize_leaf(t): return torch.tensor(t.data)/
 normalize_leaf	utils.py	/^def normalize_leaf(t): return torch.tensor(t.data)/
-num_labs	utils_old.py	/^def num_labs(labels): return len(set([l for l in l/
+np_save	utils.py	/^def np_save(array,directory,fname):$/
+np_savez	utils.py	/^def np_savez(data_dict,directory,fname):$/
 num_labs	utils.py	/^def num_labs(labels): return len(set([l for l in l/
-numpyify	utils_old.py	/^def numpyify(x):$/
 numpyify	utils.py	/^def numpyify(x):$/
-oheify	utils_old.py	/^def oheify(x):$/
 oheify	utils.py	/^def oheify(x):$/
 posterior_corrects	test.py	/^def posterior_corrects(results):$/
 posterior_corrects	utils.py	/^def posterior_corrects(results):$/
 posteriors	test.py	/^def posteriors(results,prior_correct):$/
 posteriors	utils.py	/^def posteriors(results,prior_correct):$/
-predict	utils_old.py	/^    def predict(self,inp_):$/
 predict	utils.py	/^    def predict(self,inp_):$/
 pretrain_ae	min_ex.py	/^def pretrain_ae(ae_dict,args):$/
 pretrain_ae	multi_ae.py	/^def pretrain_ae(ae_dict,args,should_change):$/
-print_tensors	utils_old.py	/^def print_tensors(*tensors):$/
 print_tensors	utils.py	/^def print_tensors(*tensors):$/
 prior_for_results	test.py	/^def prior_for_results(results,prior_correct):$/
 prior_for_results	utils.py	/^def prior_for_results(results,prior_correct):$/
 prob_results_given_c	test.py	/^def prob_results_given_c(results,cluster,prior_cor/
 prob_results_given_c	utils.py	/^def prob_results_given_c(results,cluster,prior_cor/
-prune	utils_old.py	/^def prune(enc,dec,lin,idx):$/
 prune	utils.py	/^def prune(enc,dec,lin,idx):$/
 racc	multi_ae.py	/^    def racc(pred,gt): return round(utils.accuracy/
-reload	utils_old.py	/^def reload():$/
 reload	utils.py	/^def reload():$/
 rmi_func	multi_ae.py	/^    def rmi_func(pred,gt): return round(mi_func(pr/
-safemean	utils_old.py	/^def safemean(t): return 0 if t.numel() == 0 else t/
 safemean	utils.py	/^def safemean(t): return 0 if t.numel() == 0 else t/
-same_num_labs	utils_old.py	/^def same_num_labs(labels1,labels2): num_labs(label/
 same_num_labs	utils.py	/^def same_num_labs(labels1,labels2): num_labs(label/
-save_and_check	utils_old.py	/^def save_and_check(enc,dec,fname):$/
 save_and_check	utils.py	/^def save_and_check(enc,dec,fname):$/
-scatter_clusters	utils_old.py	/^def scatter_clusters(embeddings,labels,show):$/
 scatter_clusters	utils.py	/^def scatter_clusters(embeddings,labels,show):$/
 self_pow_plus	test.py	/^def self_pow_plus(x): $/
 sequence_of_all_agrees	test.py	/^def sequence_of_all_agrees(ensemble_labels_):$/
-set_experiment_dir	utils_old.py	/^def set_experiment_dir(exp_name, overwrite):$/
 set_experiment_dir	utils.py	/^def set_experiment_dir(exp_name, overwrite):$/
-show_xb	utils_old.py	/^def show_xb(xb): plt.imshow(xb[0,0]); plt.show()$/
 show_xb	utils.py	/^def show_xb(xb): plt.imshow(xb[0,0]); plt.show()$/
-stats	utils_old.py	/^def stats(x): return x.mean(),x.std()$/
 stats	utils.py	/^def stats(x): return x.mean(),x.std()$/
-test_mods_eq	utils_old.py	/^def test_mods_eq(m1,m2):$/
 test_mods_eq	utils.py	/^def test_mods_eq(m1,m2):$/
-to_float_tensor	utils_old.py	/^def to_float_tensor(item): return item.float().div/
 to_float_tensor	utils.py	/^def to_float_tensor(item): return item.float().div/
+torch_save	utils.py	/^def torch_save(checkpoint,directory,fname):$/
 train_ae	min_ex.py	/^def train_ae(ae_dict,args,centroids_by_id,ensemble/
 train_ae	multi_ae.py	/^def train_ae(ae_dict,args,centroids_by_id,ensemble/
-translate_labellings	utils_old.py	/^def translate_labellings(trans_from_labels,trans_t/
 translate_labellings	utils.py	/^def translate_labellings(trans_from_labels,trans_t/
 translate_labellings_fanin	utils.py	/^def translate_labellings_fanin(trans_from_labels,t/
 translate_labellings_fanout	utils.py	/^def translate_labellings_fanout(trans_from_labels,/
-umap_embed	utils_old.py	/^def umap_embed(vectors,**config): return umap.UMAP/
 umap_embed	utils.py	/^def umap_embed(vectors,**config): return umap.UMAP/
-vis_latent	utils_old.py	/^def vis_latent(dec,latent): plt.imshow(dec(latent[/
 vis_latent	utils.py	/^def vis_latent(dec,latent): plt.imshow(dec(latent[/
 votes_to_probs	test.py	/^def votes_to_probs(multihots,prior_correct):$/
 votes_to_probs	utils.py	/^def votes_to_probs(multihots,prior_correct):$/

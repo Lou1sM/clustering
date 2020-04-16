@@ -89,47 +89,61 @@ class Generator(nn.Module):
         return self.main(inp)
 
 class GeneratorStacked(nn.Module):
-    def __init__(self, nz,ngf,nc,dropout_p=0.):
+    def __init__(self, nz, ngf, nc, output_size, dropout_p=0.):
         super(GeneratorStacked, self).__init__()
         self.dropout = torch.nn.Dropout(p=dropout_p)
+        self.output_size = output_size
         self.block1 = nn.Sequential(
-            # input is Z, going into a convolution
             nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 1, bias=False),
             nn.BatchNorm2d(ngf * 8),
             nn.ReLU(True),
             self.dropout)
-            # state size. (ngf*8) x 4 x 4
         self.block2 = nn.Sequential(
             nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 4),
             nn.ReLU(True),
             self.dropout)
-            # state size. (ngf*4) x 8 x 8
         self.block3 = nn.Sequential(
             nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 2),
             nn.ReLU(True),
             self.dropout)
-            # state size. (ngf*2) x 16 x 16
-        self.block4 = nn.Sequential(
-            nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 2, bias=False),
-            nn.BatchNorm2d(ngf),
-            nn.ReLU(True),
-            self.dropout)
-            # state size. (ngf) x 32 x 32
-        self.block5 = nn.Sequential(
-            nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
-            nn.Tanh()
-            # state size. (nc) x 64 x 64
-        )
+        if output_size == 16:
+            self.block4 = nn.Sequential(
+                nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(ngf),
+                nn.ReLU(True),
+                self.dropout)
+        elif output_size == 28:
+            self.block4 = nn.Sequential(
+                nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 2, bias=False),
+                nn.BatchNorm2d(ngf),
+                nn.ReLU(True),
+                self.dropout)
+            self.block5 = nn.Sequential(
+                nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
+                nn.Tanh()
+            )
+        elif output_size == 32:
+            self.block4 = nn.Sequential(
+                nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(ngf),
+                nn.ReLU(True),
+                self.dropout)
+            self.block5 = nn.Sequential(
+                nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
+                nn.Tanh()
+            )
+
 
     def forward(self,inp):
-        out1 = self.block1(inp)
-        out2 = self.block2(out1)
-        out3 = self.block3(out2)
-        out4 = self.block4(out3)
-        out5 = self.block5(out4)
-        return out3, out5
+        out = self.block1(inp)
+        out = self.block2(out)
+        out = self.block3(out)
+        out = self.block4(out)
+        if self.output_size in [28,32]:
+            out = self.block5(out)
+        return out
 
 class EncoderStacked(nn.Module):
     def __init__(self,block1,block2):
@@ -139,7 +153,7 @@ class EncoderStacked(nn.Module):
     def forward(self,inp):
         out1 = self.block1(inp)
         out2 = self.block2(out1)
-        return out1, out2
+        return out2
 
     @property
     def device(self):
@@ -152,13 +166,14 @@ class TransformDataset(data.Dataset):
     def __init__(self,data,transforms,x_only,device):
         self.transform,self.x_only,self.device=compose(transforms),x_only,device
         if x_only:
-            self.data = data.to(self.device)
+            self.x = data.to(self.device)
         else:
-            self.x,self.y = data.train_data.to(self.device), data.train_labels.to(self.device)
-            self.x.to(self.device); self.y.to(self.device)
+            x, y = data
+            self.x,self.y = x.to(self.device), y.to(self.device)
+            #self.x.to(self.device); self.y.to(self.device)
     def __len__(self): return len(self.data) if self.x_only else len(self.x)
     def __getitem__(self,idx):
-        if self.x_only: return self.transform(self.data[idx]), idx
+        if self.x_only: return self.transform(self.x[idx]), idx
         else: return self.transform(self.x[idx]), self.y[idx], idx
 
 class KwargTransformDataset(data.Dataset):
@@ -186,7 +201,20 @@ def show_xb(xb): plt.imshow(xb[0,0]); plt.show()
 def normalize_leaf(t): return torch.tensor(t.data)/t.data.norm()
 def normalize(t): return t/t.norm()
 def to_float_tensor(item): return item.float().div_(255.)
-def add_colour_dimension(item): return item.unsqueeze(0) if item.dim() == 2 else item.unsqueeze(1)
+def add_colour_dimension(item): 
+    if item.dim() == 4:
+        if item.shape[1] in [1,3]: # batch, channels, size, size
+            return item
+        elif item.shape[3] in [1,3]:  # batch, size, size, channels
+            return item.permute(0,3,1,2)
+    if item.dim() == 3:
+        if item.shape[0] in [1,3]: # channels, size, size
+            return item
+        elif item.shape[2] in [1,3]: # size, size, channels
+            return item.permute(2,0,1)
+        else: return item.unsqueeze(1) # batch, size, size
+    else: return item.unsqueeze(0) # size, size
+
 def umap_embed(vectors,**config): return umap.UMAP(random_state=42).fit_transform(vectors,**config)
 def stats(x): return x.mean(),x.std()
 def safemean(t): return 0 if t.numel() == 0 else t.mean()
@@ -280,16 +308,16 @@ class SuperAE(nn.Module):
     def decode_all(self,x):
         return [dec(x) for dec in self.decs]
 
-def make_ae(aeid,device,NZ):
+def make_ae(aeid,device,NZ,image_size,num_channels):
     with torch.cuda.device(device):
-        enc_b1, enc_b2 = get_enc_blocks('cuda',NZ)
+        enc_b1, enc_b2 = get_enc_blocks('cuda',NZ,num_channels)
         enc = EncoderStacked(enc_b1,enc_b2)
-        dec = GeneratorStacked(nz=NZ,ngf=32,nc=1,dropout_p=0.)
+        dec = GeneratorStacked(nz=NZ,ngf=32,nc=1,output_size=image_size,dropout_p=0.)
         dec.to(device)
     return AE(enc,dec,aeid)
 
-def get_enc_blocks(device, latent_size):
-    block1 = get_reslike_block([1,4,8,16,32,64],sz=8)
+def get_enc_blocks(device, latent_size, num_channels):
+    block1 = get_reslike_block([num_channels,4,8,16,32,64],sz=8)
     block2 = get_reslike_block([64,128,256,latent_size],sz=1)
     return block1.to(device), block2.to(device)
 
@@ -323,6 +351,22 @@ def get_fashionmnist_dset(device='cuda',x_only=False):
     data = fashionmnist_data.train_data if x_only else fashionmnist_data
     fashionmnist_dataset = TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
     return fashionmnist_dataset
+
+def get_vision_dset(dset_name,device='cuda',x_only=False):
+    if dset_name == 'MNIST':
+        d=tdatasets.MNIST(root='~/unsupervised_object_learning/MNIST/data',train=True,download=True)
+        data = d.train_data if x_only else (d.train_data, d.train_labels)
+    elif dset_name == 'FashionMNIST':
+        d=tdatasets.FashionMNIST(root='~/unsupervised_object_learning/FashionMNIST/data',train=True,download=True)
+        data = d.train_data if x_only else (d.train_data, d.train_labels)
+    elif dset_name == 'USPS':
+        d=tdatasets.USPS(root='~/unsupervised_object_learning/USPS/data',train=True,download=True)
+        data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
+    elif dset_name == 'CIFAR10':
+        d=tdatasets.CIFAR10(root='~/unsupervised_object_learning/CIFAR10/data',train=True,download=True)
+        data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
+    return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
+
 
 def get_dloader(raw_data,x_only,batch_size,device,random=True):
     ds = get_dset(raw_data,x_only,device=device)
@@ -609,6 +653,21 @@ def votes_to_probs(multihots,prior_correct):
     probs_array = np.array(probs_list)
     return probs_array
 
+def check_dir(directory):
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+    
+def torch_save(checkpoint,directory,fname):
+    check_dir(directory)
+    torch.save(checkpoint,os.path.join(directory,fname))
+
+def np_save(array,directory,fname):
+    check_dir(directory)
+    np.save(os.path.join(directory,fname),array)
+
+def np_savez(data_dict,directory,fname):
+    check_dir(directory)
+    np.savez(os.path.join(directory,fname),**data_dict)
 
 if __name__ == "__main__":
     small_labels = np.array([1,2,3,4,0,4,4])
