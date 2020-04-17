@@ -75,8 +75,17 @@ def label_single(ae_output,args):
         umapped_latents = None
     else:
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
-        latent_scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
-        labels = latent_scanner.fit_predict(umapped_latents)
+        scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500).fit(umapped_latents)
+        eps = 0.05
+        while True:
+            labels = scanner.single_linkage_tree_.get_clusters(eps)
+            n = utils.get_num_labels(labels)
+            if n == 10:
+                break
+            elif n < 10:
+                eps -= 0.001
+            else:
+                eps += 0.01
         if args.save:
             utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy')
             utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{aeid}.npy')
@@ -86,7 +95,6 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     nums_labels = [utils.get_num_labels(ae_results['labels']) for ae_results in vecs_and_labels.values()]
     counts = {x:nums_labels.count(x) for x in set(nums_labels)}
     ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[-1]
-    print(f'All nums labels: {nums_labels}, ensemble num labels: {ensemble_num_labels}')
     assert given_gt is 'none' or ensemble_num_labels == utils.get_num_labels(given_gt)
     usable_labels = {aeid:result['labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['labels']) == ensemble_num_labels}
     if pivot is not 'none' and ensemble_num_labels == utils.num_labs(pivot):
@@ -98,12 +106,11 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     ensemble_labels_ = multihots.argmax(axis=1)
     ensemble_labels = given_gt if given_gt is not 'none' else ensemble_labels_
     centroids_by_id = {}
+    for l in same_lang_labels+[ensemble_labels]: print({i:(l==i).sum() for i in set(l)}) # Size of clusters
     for aeid in set(usable_labels.keys()):
         new_centroid_info={'aeid':aeid}
         if aeid == 'concat': continue
         if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
-            print('No all agree vecs for centroids')
-            print({i:((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))})
             continue
         latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
         try:
@@ -124,8 +131,6 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
         befores = [p.detach().cpu() for p in ae.parameters()]
         if aeid not in centroids_by_id.keys():
-            print(f'{aeid}, you must be new here, not in {list(centroids_by_id.keys())}')
-            pretrain_ae(ae_dict,args=args,should_change=False)
             crtrain = False
         else:
             latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
@@ -415,7 +420,7 @@ if __name__ == "__main__":
         for meta_epoch_num in range(ARGS.max_meta_epochs):
             meta_epoch_start_time = time()
             print('\nMeta epoch:', meta_epoch_num)
-            copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid':ae['aeid'], 'ae':new_ae(ae['aeid'])} for ae in aes]
+            copied_aes = [copy.deepcopy(ae) for ae in aes]
             if len(aes) == 0:
                 print('No legit aes left')
                 sys.exit()
