@@ -1,3 +1,7 @@
+import signal
+import sys
+signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
+
 from functools import partial
 from pdb import set_trace
 from time import time
@@ -7,14 +11,11 @@ import hdbscan
 import numpy as np
 import os
 import random
-import signal
-import sys
 import torch
 import torch.nn as nn
 import umap
 import utils
 import warnings
-signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
 warnings.filterwarnings('ignore')
 
 
@@ -74,18 +75,59 @@ def label_single(ae_output,args):
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
         umapped_latents = None
     else:
+        min_c = 500
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
-        scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500).fit(umapped_latents)
-        eps = 0.05
-        while True:
-            labels = scanner.single_linkage_tree_.get_clusters(eps)
-            n = utils.get_num_labels(labels)
-            if n == 10:
-                break
-            elif n < 10:
-                eps -= 0.001
-            else:
-                eps += 0.01
+        scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
+        n = -1
+        if utils.get_num_labels(scanner.labels_) == 10:
+            labels = scanner.labels_
+        elif utils.get_num_labels(scanner.labels_) > 10: 
+            print(f"AE {aeid} has too MANY labels: {utils.get_num_labels(scanner.labels_)}")
+            eps = 0.01
+            for i in range(1000):
+                labels = hdbscan.hdbscan_._tree_to_labels(umapped_latents, scanner.single_linkage_tree_.to_numpy(), cluster_selection_epsilon=eps, min_cluster_size=min_c)[0]
+                n = utils.get_num_labels(labels)
+                if n == 10:
+                    break
+                elif n > 10:
+                    eps += 0.01
+                else:
+                    eps -= 0.001
+        else:
+            eps = 1.
+            print(f"AE {aeid} has too FEW labels: {utils.get_num_labels(scanner.labels_)}")
+            best_eps = eps
+            most_n = 0
+            for i in range(1000):
+                labels = scanner.single_linkage_tree_.get_clusters(eps,min_cluster_size=min_c)
+                n = utils.get_num_labels(labels)
+                if n > most_n:
+                    most_n = n
+                    best_eps = eps
+                if n == 10:
+                    print(f'ae {aeid} using {eps}')
+                    break
+                elif set(labels) == set([-1]):
+                    for _ in range(500):
+                        labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
+                        n = utils.get_num_labels(labels)
+                        if n == 10:
+                            print('having to use min_c', min_c)
+                            break
+                        elif n > 10:
+                            eps += 0.01
+                        else:
+                            min_c -= 1
+                    print(888)
+                    break
+
+                elif n < 10:
+                    if i > 100:
+                        print(n,i)
+                    eps -= 0.01
+                else:
+                    print(f'ae {aeid} overshot to {n} with {eps} at {i}')
+                    eps *= 1.1
         if args.save:
             utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy')
             utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{aeid}.npy')
@@ -117,8 +159,8 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
             assert (latent_centroids == latent_centroids).all()
         except: set_trace()
         new_centroid_info['latent_centroids'] = latent_centroids
-        if args.save: utils.np_save(latent_centroids,f'../{args.dset}/centroids', f'latent_centroids{aeid}.npy')
         centroids_by_id[aeid] = new_centroid_info
+        if args.save: utils.np_save(latent_centroids,f'../{args.dset}/centroids', f'centroids{aeid}.npy')
 
     if args.save:
         utils.np_save(ensemble_labels,f'../{args.dset}', 'ensemble_labels.npy')
@@ -166,15 +208,11 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
                 if not mask.any():
                     loss = rloss.mean()
                 else:
-                    lin_pred = ae.pred(utils.noiseify(latent,args.noise)[:,:,0,0])
-                    gauss_loss = ce_loss_func(lin_pred,targets).mean()
-                    loss = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + rloss[~mask].mean() + args.rlmbda*rloss.mean()
-                    if crtrain:
-                        latent_centroid_targets = latent_centroids[targets]
-                        crpred = ae.dec(latent_centroid_targets[mask,:,None,None])
-                        crloss_ = loss_func(crpred,xb[mask]).mean(dim=[1,2,3])
-                        loss += 0.1*(crloss_).mean()
-                        total_crloss = total_crloss*((i+1)/(i+2)) + crloss_.mean().item()*(1/(i+2))
+                    lin_pred = ae.pred(utils.noiseify(latent[mask],args.noise)[:,:,0,0])
+                    gauss_loss = ce_loss_func(lin_pred,targets[mask]).mean()
+                    loss = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + args.rlmbda*rloss.mean()
+                    if not mask.all():
+                        loss += rloss[~mask].mean()
                     if args.worst3:
                         wor1 = (targets == worst3[0])
                         wor2 = (targets == worst3[1])
@@ -183,19 +221,14 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
                         worstmask3 = (wor1 + wor2 + wor3)*mask
                         worsttargets2 = torch.tensor(utils.compress_labels(targets[worstmask2]),device=device).long()
                         worsttargets3 = torch.tensor(utils.compress_labels(targets[worstmask3]),device=device).long()
-                        try:
-                            if worstmask2.any():
-                                w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2)
-                            else: w2loss = torch.tensor(0.,device=device)
-                            if worstmask3.any():
-                                w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3)
-                            else: w3loss = torch.tensor(0.,device=device)
-                        except Exception as e:
-                            print(e)
-                            set_trace()
-                        loss +=  w2loss.mean() + w3loss.mean()
-                        total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
-                        total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
+                        if worstmask2.any():
+                            w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2).mean() 
+                            loss += w2loss
+                            total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
+                        if worstmask3.any():
+                            w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3).mean() 
+                            loss += w3loss
+                            total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
                     total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
                     total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
                 assert loss != 0
@@ -216,7 +249,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
             if args.test: break
             print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
             if epoch_loss < 0.02: break
-        afters = [p.detach().cpu() for p in ae.parameters()]
+        afters = [p.detach().cpu() for p in list(ae.enc.parameters()) + list(ae.dec.parameters())]
         if args.worst3:
             for b,a in zip(befores,afters): assert not (b==a).all()
         if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
@@ -472,14 +505,14 @@ if __name__ == "__main__":
             num_agree_histories.append(all_agree.sum())
             new_best_acc = acc
             print('AE Scores:')
-            print('L acc', [racc(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
-            print('L MI', [rmi_func(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids if x in centroids_by_id.keys()])
+            print('L acc', [racc(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids])
+            print('L MI', [rmi_func(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids])
             print('Ensemble Scores:')
             print('Acc:',acc)
             print('Acc agree:', racc(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi)
             print('NMI agree:',rmi_func(ensemble_labels[all_agree],gt_labels[all_agree]))
-            print('Num agrees:', all_agree.sum())
+            print('Num agrees:', all_agree.sum(), all_agree.sum()/ARGS.dset_size)
             print(f'Meta Epoch time: {utils.asMinutes(time()-meta_epoch_start_time)}')
             if new_best_acc <= best_acc:
                 count += 1
