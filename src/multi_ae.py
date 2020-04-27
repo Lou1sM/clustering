@@ -324,7 +324,6 @@ if __name__ == "__main__":
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--show_gpu_memory',action='store_true')
     parser.add_argument('--solid',action='store_true')
-    parser.add_argument('--rlmbda',type=float,default=1.)
     parser.add_argument('--test','-t',action='store_true')
     parser.add_argument('--vis_pretrain',action='store_true')
     parser.add_argument('--worst3',action='store_true')
@@ -392,7 +391,7 @@ if __name__ == "__main__":
 
     device = torch.device(f'cuda:{ARGS.gpu}')
     new_ae = partial(utils.make_ae,device=device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
-    filled_pretrain = partial(pretrain_ae,args=ARGS,should_change=True)
+    filled_pretrain = partial(rtrain_ae,args=ARGS,should_change=True)
     filled_generate = partial(generate_vecs_single,args=ARGS)
     filled_label = partial(label_single,args=ARGS)
     filled_load_ae = partial(load_ae,args=ARGS)
@@ -510,7 +509,6 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-            else: worst3=None
             targets  = utils.votes_to_probs(multihots,prior_correct=.98)
             filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,multihots=multihots,worst3=worst3,targets=targets,all_agree=all_agree_soft,meta_epoch_num=max(0,meta_epoch_num-5))
             with ctx.Pool(processes=len(aes)) as pool:
