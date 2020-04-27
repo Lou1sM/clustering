@@ -7,6 +7,7 @@ from pdb import set_trace
 from time import time
 from torch.utils import data
 import copy
+import gc
 import hdbscan
 import numpy as np
 import os
@@ -70,8 +71,8 @@ def generate_vecs_single(ae_dict,args):
 def label_single(ae_output,args):
     aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
-        as_tens = np.tile(np.arange(10),args.dset_size//10)
-        remainder = np.zeros(args.dset_size%10)
+        as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
+        remainder = np.zeros(args.dset_size%args.num_clusters)
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
         umapped_latents = None
     else:
@@ -79,17 +80,17 @@ def label_single(ae_output,args):
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
         n = -1
-        if utils.get_num_labels(scanner.labels_) == 10:
+        if utils.get_num_labels(scanner.labels_) == args.num_clusters:
             labels = scanner.labels_
-        elif utils.get_num_labels(scanner.labels_) > 10: 
+        elif utils.get_num_labels(scanner.labels_) > args.num_clusters: 
             print(f"AE {aeid} has too MANY labels: {utils.get_num_labels(scanner.labels_)}")
             eps = 0.01
             for i in range(1000):
                 labels = hdbscan.hdbscan_._tree_to_labels(umapped_latents, scanner.single_linkage_tree_.to_numpy(), cluster_selection_epsilon=eps, min_cluster_size=min_c)[0]
                 n = utils.get_num_labels(labels)
-                if n == 10:
+                if n == args.num_clusters:
                     break
-                elif n > 10:
+                elif n > args.num_clusters:
                     eps += 0.01
                 else:
                     eps -= 0.001
@@ -104,24 +105,24 @@ def label_single(ae_output,args):
                 if n > most_n:
                     most_n = n
                     best_eps = eps
-                if n == 10:
+                if n == args.num_clusters:
                     print(f'ae {aeid} using {eps}')
                     break
                 elif set(labels) == set([-1]):
                     for _ in range(500):
                         labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
                         n = utils.get_num_labels(labels)
-                        if n == 10:
+                        if n == args.num_clusters:
                             print('having to use min_c', min_c)
                             break
-                        elif n > 10:
+                        elif n > args.num_clusters:
                             eps += 0.01
                         else:
                             min_c -= 1
                     print(888)
                     break
 
-                elif n < 10:
+                elif n < args.num_clusters:
                     if i > 100:
                         print(n,i)
                     eps -= 0.01
@@ -234,8 +235,8 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
                 assert loss != 0
                 loss.backward(); opt.step(); opt.zero_grad()
                 if args.test: break
-            print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
             if args.test: break
+        print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
         for epoch in range(args.inter_epochs):
             epoch_loss = 0
             for i, (xb,yb,idx) in enumerate(dl):
@@ -247,7 +248,7 @@ def train_ae(ae_dict,args,centroids_by_id,ensemble_labels,all_agree,worst3):
                 epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
                 if args.test: break
             if args.test: break
-            print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
+            #print(f'\tInter Epoch: {epoch}\tLoss: {epoch_loss.item()}')
             if epoch_loss < 0.02: break
         afters = [p.detach().cpu() for p in list(ae.enc.parameters()) + list(ae.dec.parameters())]
         if args.worst3:
@@ -295,7 +296,7 @@ if __name__ == "__main__":
     parser.add_argument('--clmbda',type=float,default=1.)
     parser.add_argument('--conc',action='store_true')
     parser.add_argument('--dec_lr',type=float,default=1e-3)
-    parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST','USPS','CIFAR10'])
+    parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST','USPS','CIFAR10','coil-100', 'letterAJ'])
     parser.add_argument('--enc_lr',type=float,default=1e-3)
     parser.add_argument('--epochs',type=int,default=8)
     parser.add_argument('--exp_name',type=str,default='try')
@@ -309,10 +310,11 @@ if __name__ == "__main__":
     parser.add_argument('--rlmbda',type=float,default=1.)
     parser.add_argument('--save','-s',action='store_true')
     parser.add_argument('--scatter_clusters',action='store_true')
-    parser.add_argument('--sections',type=int,nargs='+')
+    parser.add_argument('--sections',type=int,nargs='+', default=[5])
     parser.add_argument('--seed',type=int,default=0)
     parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--single',action='store_true')
+    parser.add_argument('--show_gpu_memory',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--test','-t',action='store_true')
     parser.add_argument('--vis_pretrain',action='store_true')
@@ -350,18 +352,27 @@ if __name__ == "__main__":
         ARGS.pretrain_epochs = 1                                                
         ARGS.meta_epochs = 2
 
-    if ARGS.dset in ['MNIST','FashionMNIST']:
+    if ARGS.dset in ['MNIST','FashionMNIST','letterAJ']:
         ARGS.image_size = 28
         ARGS.dset_size = 60000
         ARGS.num_channels = 1
+        ARGS.num_clusters = 10
     elif ARGS.dset == 'USPS':
         ARGS.image_size = 16
         ARGS.dset_size = 7291
         ARGS.num_channels = 1
+        ARGS.num_clusters = 10
     elif ARGS.dset == 'CIFAR10':
         ARGS.image_size = 32
         ARGS.dset_size = 50000
         ARGS.num_channels = 3
+        ARGS.num_clusters = 10
+    elif ARGS.dset == 'coil-100':
+        ARGS.image_size = 128
+        ARGS.dset_size = 7200
+        ARGS.num_channels = 3
+        ARGS.num_clusters = 100
+
 
     device = torch.device(f'cuda:{ARGS.gpu}')
     new_ae = partial(utils.make_ae,device=device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
@@ -443,7 +454,6 @@ if __name__ == "__main__":
     elif 5 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
         centroids_by_id, ensemble_labels, all_agree = filled_load_ensemble(aeids)
-        #concatted_labels = np.load(f'../{ARGS.dset}/labels/concatted_labels.npy')
 
     if 5 in ARGS.sections:
         train_start_time = time()
@@ -451,6 +461,14 @@ if __name__ == "__main__":
         count = 0
         acc_histories, mi_histories, num_agree_histories = [],[],[]
         for meta_epoch_num in range(ARGS.max_meta_epochs):
+            if ARGS.show_gpu_memory:
+                mem_used = 0
+                for obj in gc.get_objects():
+                    try:
+                        if torch.is_tensor(obj) or hasattr(obj, 'data') and torch.is_tensor(obj.data):
+                            mem_used += obj.element_size() * obj.nelement()
+                    except: pass
+                print(f"GPU memory usage: {mem_used}")
             meta_epoch_start_time = time()
             print('\nMeta epoch:', meta_epoch_num)
             copied_aes = [copy.deepcopy(ae) for ae in aes]
@@ -466,10 +484,9 @@ if __name__ == "__main__":
 
                 try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
                 except: set_trace()
-                num_labels = len(set(ensemble_labels))
                 for aedict in copied_aes:
                     try: assert(aedict['ae'].pred.in_features == ARGS.NZ)
-                    except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,num_labels,device=device)
+                    except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
                 filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,ensemble_labels=ensemble_labels,all_agree=all_agree,worst3=worst3)
@@ -505,14 +522,14 @@ if __name__ == "__main__":
             num_agree_histories.append(all_agree.sum())
             new_best_acc = acc
             print('AE Scores:')
-            print('L acc', [racc(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids])
+            print('L acc', [racc(label_dict['labels'][label_dict['labels']>=0],gt_labels[label_dict['labels']>=0]) for label_dict in labels.values()])
             print('L MI', [rmi_func(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids])
             print('Ensemble Scores:')
             print('Acc:',acc)
             print('Acc agree:', racc(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi)
             print('NMI agree:',rmi_func(ensemble_labels[all_agree],gt_labels[all_agree]))
-            print('Num agrees:', all_agree.sum(), all_agree.sum()/ARGS.dset_size)
+            print('Num agrees:', all_agree.sum(), round(all_agree.sum()/ARGS.dset_size,4))
             print(f'Meta Epoch time: {utils.asMinutes(time()-meta_epoch_start_time)}')
             if new_best_acc <= best_acc:
                 count += 1

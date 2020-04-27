@@ -94,46 +94,58 @@ class GeneratorStacked(nn.Module):
         self.dropout = torch.nn.Dropout(p=dropout_p)
         self.output_size = output_size
         self.block1 = nn.Sequential(
-            nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 1, bias=False),
+            nn.ConvTranspose2d( nz, 256, 4, 1, 1, bias=False),
             nn.BatchNorm2d(ngf * 8),
             nn.ReLU(True),
             self.dropout)
         self.block2 = nn.Sequential(
-            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 4),
             nn.ReLU(True),
             self.dropout)
         self.block3 = nn.Sequential(
-            nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 2),
             nn.ReLU(True),
             self.dropout)
         if output_size == 16:
             self.block4 = nn.Sequential(
-                nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
-                nn.BatchNorm2d(ngf),
+                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(32),
                 nn.ReLU(True),
                 self.dropout)
         elif output_size == 28:
             self.block4 = nn.Sequential(
-                nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 2, bias=False),
-                nn.BatchNorm2d(ngf),
+                nn.ConvTranspose2d(64, 32, 4, 2, 2, bias=False),
+                nn.BatchNorm2d(32),
                 nn.ReLU(True),
                 self.dropout)
             self.block5 = nn.Sequential(
-                nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False),
                 nn.Tanh()
             )
-        elif output_size == 32:
+        elif output_size in [32,128]:
             self.block4 = nn.Sequential(
-                nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
-                nn.BatchNorm2d(ngf),
+                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(32),
                 nn.ReLU(True),
                 self.dropout)
-            self.block5 = nn.Sequential(
-                nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
-                nn.Tanh()
-            )
+            if output_size == 32:
+                self.block5 = nn.Sequential(
+                    nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False),
+                    nn.Tanh()
+                )
+            elif output_size == 128:
+                self.block5 = nn.Sequential(
+                    nn.ConvTranspose2d(32, 32, 4, 4, 0, bias=False),
+                    nn.BatchNorm2d(32),
+                    nn.ReLU(True),
+                    self.dropout)
+                self.block6 = nn.Sequential(
+                    nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=False),
+                    nn.Tanh()
+                )
+                        
 
 
     def forward(self,inp):
@@ -141,8 +153,10 @@ class GeneratorStacked(nn.Module):
         out = self.block2(out)
         out = self.block3(out)
         out = self.block4(out)
-        if self.output_size in [28,32]:
+        if self.output_size in [28,32,128]:
             out = self.block5(out)
+        if self.output_size == 128:
+            out = self.block6(out)
         return out
 
 class EncoderStacked(nn.Module):
@@ -312,7 +326,7 @@ def make_ae(aeid,device,NZ,image_size,num_channels):
     with torch.cuda.device(device):
         enc_b1, enc_b2 = get_enc_blocks('cuda',NZ,num_channels)
         enc = EncoderStacked(enc_b1,enc_b2)
-        dec = GeneratorStacked(nz=NZ,ngf=32,nc=1,output_size=image_size,dropout_p=0.)
+        dec = GeneratorStacked(nz=NZ,ngf=32,nc=num_channels,output_size=image_size,dropout_p=0.)
         dec.to(device)
     return AE(enc,dec,aeid)
 
@@ -352,6 +366,22 @@ def get_fashionmnist_dset(device='cuda',x_only=False):
     fashionmnist_dataset = TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
     return fashionmnist_dataset
 
+def load_coil100(x_only, data_dir='../coil-100'):
+    images = np.stack([plt.imread(os.path.join(data_dir,x)) for x in os.listdir(data_dir) if x.startswith('obj')])
+    labels = [int(x.split('_')[0][3:]) for x in os.listdir(data_dir) if x.startswith('obj')]
+    if x_only: 
+        return torch.tensor(images)
+    else:
+        return torch.tensor(images), torch.tensor(labels)
+
+def load_letterAJ(x_only, data_dir='../notMNIST_large'):
+    images = np.stack([plt.imread(os.path.join(data_dir,x)) for x in os.listdir(data_dir) if x.startswith('obj')])
+    labels = [int(x.split('_')[0][3:]) for x in os.listdir(data_dir) if x.startswith('obj')]
+    if x_only: 
+        return torch.tensor(images)
+    else:
+        return torch.tensor(images), torch.tensor(labels)
+
 def get_vision_dset(dset_name,device='cuda',x_only=False):
     if dset_name == 'MNIST':
         d=tdatasets.MNIST(root='~/unsupervised_object_learning/MNIST/data',train=True,download=True)
@@ -365,8 +395,13 @@ def get_vision_dset(dset_name,device='cuda',x_only=False):
     elif dset_name == 'CIFAR10':
         d=tdatasets.CIFAR10(root='~/unsupervised_object_learning/CIFAR10/data',train=True,download=True)
         data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
+    elif dset_name == 'coil-100':
+        data = load_coil100(x_only)
+    elif dset_name == 'letterAJ':
+        data = load_letterAJ(x_only)
+        print(data[0].shape,data[1].shape)
+    else: set_trace()
     return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
-
 
 def get_dloader(raw_data,x_only,batch_size,device,random=True):
     ds = get_dset(raw_data,x_only,device=device)
