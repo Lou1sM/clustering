@@ -77,9 +77,8 @@ def label_single(ae_output,args):
         remainder = np.zeros(args.dset_size%args.num_clusters)
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
         umapped_latents = None
-        probs = np.ones(60000)
     else:
-        min_c = 500
+        min_c = 5000 if args.dset == 'letterAJ' else 500
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
         n = -1
@@ -171,31 +170,22 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         utils.np_save(all_agree,f'../{args.dset}', 'all_agree.npy')
     return centroids_by_id, ensemble_labels_, all_agree
 
-def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets,all_agree,meta_epoch_num):
+def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
         befores = [p.detach().cpu() for p in ae.parameters()]
-        if aeid not in centroids_by_id.keys():
-            crtrain = False
-        else:
-            latent_centroids = torch.tensor(centroids_by_id[aeid]['latent_centroids'],device='cuda')
-            crtrain = True
-
         dset = utils.get_vision_dset(args.dset)
         dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
         loss_func=nn.L1Loss(reduction='none')
-        def ce_loss_func(pred,gt):
-            pred_probs = pred - torch.logsumexp(pred,-1,keepdim=True)
-            return -pred_probs*gt
-        mse_loss_func = nn.MSELoss(reduction='none')
+        ce_loss_func = nn.CrossEntropyLoss()
         opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
         opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
         opt.add_param_group({'params':ae.pred.parameters(),'lr':1e-3})
         if args.worst3:
             opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
             opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
-        ensemble_labels = torch.tensor(ensemble_labels,device='cuda')
+        targets = torch.tensor(targets,device='cuda')
         all_agree = torch.tensor(all_agree,device=device)
         for epoch in range(args.epochs):
             total_rloss = 0.
@@ -208,8 +198,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets,all_agree,met
             rloss_list = []
             for i, (xb,yb,idx) in enumerate(dl):
                 latent  = ae.enc(xb)
-                try:targets = ensemble_labels[idx]
-                except Exception as e:print(e); set_trace()
+                batch_targets = targets[idx]
                 rpred = ae.dec(utils.noiseify(latent,args.noise))
                 rloss = loss_func(rpred,xb)
                 mask = all_agree[idx]
@@ -217,18 +206,18 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets,all_agree,met
                     loss = rloss.mean()
                 else:
                     lin_pred = ae.pred(utils.noiseify(latent[mask],args.noise)[:,:,0,0])
-                    gauss_loss = ce_loss_func(lin_pred,targets[mask]).mean()
+                    gauss_loss = ce_loss_func(lin_pred,batch_targets[mask]).mean()
                     loss = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + args.rlmbda*rloss.mean()
                     if not mask.all():
                         loss += rloss[~mask].mean()
                     if args.worst3:
-                        wor1 = (targets == worst3[0])
-                        wor2 = (targets == worst3[1])
-                        wor3 = (targets == worst3[2])
+                        wor1 = (batch_targets == worst3[0])
+                        wor2 = (batch_targets == worst3[1])
+                        wor3 = (batch_targets == worst3[2])
                         worstmask2 = (wor1 + wor2)*mask
                         worstmask3 = (wor1 + wor2 + wor3)*mask
-                        worsttargets2 = torch.tensor(utils.compress_labels(targets[worstmask2]),device=device).long()
-                        worsttargets3 = torch.tensor(utils.compress_labels(targets[worstmask3]),device=device).long()
+                        worsttargets2 = torch.tensor(utils.compress_labels(batch_targets[worstmask2]),device=device).long()
+                        worsttargets3 = torch.tensor(utils.compress_labels(batch_targets[worstmask3]),device=device).long()
                         if worstmask2.any():
                             w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2).mean() 
                             loss += w2loss
@@ -260,7 +249,7 @@ def train_ae(ae_dict,args,centroids_by_id,multihots,worst3,targets,all_agree,met
         if args.worst3:
             for b,a in zip(befores,afters): assert not (b==a).all()
         if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
-    if args.vis: utils.check_ae_images(ae.enc,ae.dec,DATASET,stacked=True)
+    if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,DATASET,stacked=True)
 
 def load_ae(aeid,args):
     checkpoints_dir = "checkpoints_solid" if args.solid else "checkpoints"
@@ -285,10 +274,9 @@ def load_ensemble(aeids,args):
             new_centroids['latent_centroids'] = np.load(f'../{args.dset}/centroids/latent_centroids{aeid}.npy')
             centroids_by_id[aeid] = new_centroids
         except FileNotFoundError: pass
-    multihots = np.load(f'../{args.dset}/multihots.npy')
-    all_agree_hard = np.load(f'../{args.dset}/all_agree_hard.npy')
-    all_agree_soft = np.load(f'../{args.dset}/all_agree_soft.npy')
-    return centroids_by_id, multihots, all_agree_hard, all_agree_soft
+    ensemble_labels = np.load(f'../{args.dset}/ensemble_labels.npy')
+    all_agree = np.load(f'../{args.dset}/all_agree.npy')
+    return centroids_by_id, ensemble_labels, all_agree
 
 if __name__ == "__main__":
     import argparse
@@ -326,6 +314,7 @@ if __name__ == "__main__":
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--test','-t',action='store_true')
     parser.add_argument('--vis_pretrain',action='store_true')
+    parser.add_argument('--vis_train',action='store_true')
     parser.add_argument('--worst3',action='store_true')
     ARGS = parser.parse_args()
     print(ARGS)
@@ -367,7 +356,7 @@ if __name__ == "__main__":
         ARGS.pretrain_epochs = 1                                                
         ARGS.meta_epochs = 2
 
-    if ARGS.dset in ['MNIST','FashionMNIST','letterAJ']:
+    if ARGS.dset in ['MNIST','FashionMNIST']:
         ARGS.image_size = 28
         ARGS.dset_size = 60000
         ARGS.num_channels = 1
@@ -387,6 +376,11 @@ if __name__ == "__main__":
         ARGS.dset_size = 7200
         ARGS.num_channels = 3
         ARGS.num_clusters = 100
+    elif ARGS.dset == 'letterAJ':
+        ARGS.image_size = 28
+        ARGS.dset_size = 18724
+        ARGS.num_channels = 1
+        ARGS.num_clusters = 10
 
 
     device = torch.device(f'cuda:{ARGS.gpu}')
@@ -475,6 +469,7 @@ if __name__ == "__main__":
         best_acc = 0.
         best_mi = 0.
         count = 0
+        num_agrees_list = []
         acc_histories, mi_histories, num_agree_histories = [],[],[]
         for meta_epoch_num in range(ARGS.max_meta_epochs):
             if ARGS.show_gpu_memory:
@@ -487,11 +482,7 @@ if __name__ == "__main__":
                 print(f"GPU memory usage: {mem_used}")
             meta_epoch_start_time = time()
             print('\nMeta epoch:', meta_epoch_num)
-            if ARGS.discard_aes:
-                with torch.cuda.device(device):
-                    copied_aes = [copy.deepcopy(ae) if ae['aeid'] in centroids_by_id.keys() else {'aeid':ae['aeid'], 'ae':utils.make_ae(ae['aeid'],device=device,NZ=ARGS.NZ)} for ae in aes]
-            else:
-                copied_aes = [copy.deepcopy(ae) for ae in aes]
+            copied_aes = [copy.deepcopy(ae) for ae in aes]
             if len(aes) == 0:
                 print('No legit aes left')
                 sys.exit()
@@ -509,13 +500,10 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-            targets  = utils.votes_to_probs(multihots,prior_correct=.98)
-            filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,multihots=multihots,worst3=worst3,targets=targets,all_agree=all_agree_soft,meta_epoch_num=max(0,meta_epoch_num-5))
+            filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree)
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Training aes {list(aeids)}...")
-                try:
-                    [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
-                except: set_trace()
+                [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
             aes = copied_aes
             assert set([ae['aeid'] for ae in aes]) == set(aeids)
             with ctx.Pool(processes=len(aes)) as pool:
@@ -537,7 +525,7 @@ if __name__ == "__main__":
             labels = utils.dictify_list(labels,key='aeid')
             vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
             print(f"Building ensemble from {len(aes)} aes...")
-            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot=ensemble_labels,given_gt='none')
+            centroids_by_id, ensemble_labels, all_agree  = build_ensemble(vecs_and_labels,ARGS,pivot='none',given_gt='none')
             print(ensemble_labels)
 
             acc = racc(ensemble_labels,gt_labels)
@@ -563,14 +551,12 @@ if __name__ == "__main__":
                 best_mi = mi
                 count = 0
                 best_ensemble_labels = ensemble_labels
-                best_all_agree_hard = all_agree_hard
-                best_all_agree_soft = all_agree_soft
+                best_all_agree = all_agree
             print('Best acc:', best_acc)
             print('Best MI:', best_mi)
             print('Count:',count)
-            num_agrees_hard_list.append(all_agree_hard.sum())
-            num_agrees_soft_list.append(all_agree_soft.sum())
-            print(f'Num agrees list: {num_agrees_soft_list}')
+            num_agrees_list.append(all_agree.sum())
+            print(f'Num agrees list: {num_agrees_list}')
             if count == ARGS.patience: break
 
         exp_dir = f'../{ARGS.dset}/experiments/{ARGS.exp_name}'

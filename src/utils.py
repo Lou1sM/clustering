@@ -184,7 +184,6 @@ class TransformDataset(data.Dataset):
         else:
             x, y = data
             self.x,self.y = x.to(self.device), y.to(self.device)
-            #self.x.to(self.device); self.y.to(self.device)
     def __len__(self): return len(self.data) if self.x_only else len(self.x)
     def __getitem__(self,idx):
         if self.x_only: return self.transform(self.x[idx]), idx
@@ -312,7 +311,6 @@ class SuperAE(nn.Module):
         return torch.stack([dec(latents[i]) for i,dec in enumerate(self.decs)])
 
     def encode(self,x):
-        #return torch.stack([enc(x) for enc in self.encs])
         return [enc(x) for enc in self.encs]
 
     def decode_list(self,latent_list):
@@ -374,9 +372,9 @@ def load_coil100(x_only, data_dir='../coil-100'):
     else:
         return torch.tensor(images), torch.tensor(labels)
 
-def load_letterAJ(x_only, data_dir='../notMNIST_large'):
-    images = np.stack([plt.imread(os.path.join(data_dir,x)) for x in os.listdir(data_dir) if x.startswith('obj')])
-    labels = [int(x.split('_')[0][3:]) for x in os.listdir(data_dir) if x.startswith('obj')]
+def load_letterAJ(x_only, data_dir='../letterAJ'):
+    images = np.load(os.path.join(data_dir,'data','ajimages.npy'))
+    labels = np.load(os.path.join(data_dir,'data','ajlabels.npy'))
     if x_only: 
         return torch.tensor(images)
     else:
@@ -399,7 +397,6 @@ def get_vision_dset(dset_name,device='cuda',x_only=False):
         data = load_coil100(x_only)
     elif dset_name == 'letterAJ':
         data = load_letterAJ(x_only)
-        print(data[0].shape,data[1].shape)
     else: set_trace()
     return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
 
