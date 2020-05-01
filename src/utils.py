@@ -145,7 +145,7 @@ class GeneratorStacked(nn.Module):
                     nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=False),
                     nn.Tanh()
                 )
-                        
+
 
 
     def forward(self,inp):
@@ -184,6 +184,7 @@ class TransformDataset(data.Dataset):
         else:
             x, y = data
             self.x,self.y = x.to(self.device), y.to(self.device)
+            assert min([im.max() for im in self.transform(x)]) == 1
     def __len__(self): return len(self.data) if self.x_only else len(self.x)
     def __getitem__(self,idx):
         if self.x_only: return self.transform(self.x[idx]), idx
@@ -214,7 +215,7 @@ def show_xb(xb): plt.imshow(xb[0,0]); plt.show()
 def normalize_leaf(t): return torch.tensor(t.data)/t.data.norm()
 def normalize(t): return t/t.norm()
 def to_float_tensor(item): return item.float().div_(255.)
-def add_colour_dimension(item): 
+def add_colour_dimension(item):
     if item.dim() == 4:
         if item.shape[1] in [1,3]: # batch, channels, size, size
             return item
@@ -367,15 +368,15 @@ def get_fashionmnist_dset(device='cuda',x_only=False):
 def load_coil100(x_only, data_dir='../coil-100'):
     images = np.stack([plt.imread(os.path.join(data_dir,x)) for x in os.listdir(data_dir) if x.startswith('obj')])
     labels = [int(x.split('_')[0][3:]) for x in os.listdir(data_dir) if x.startswith('obj')]
-    if x_only: 
+    if x_only:
         return torch.tensor(images)
     else:
         return torch.tensor(images), torch.tensor(labels)
 
 def load_letterAJ(x_only, data_dir='../letterAJ'):
     images = np.load(os.path.join(data_dir,'data','ajimages.npy'))
-    labels = np.load(os.path.join(data_dir,'data','ajlabels.npy'))
-    if x_only: 
+    labels = np.load(os.path.join(data_dir,'labels','gt_labels.npy'))
+    if x_only:
         return torch.tensor(images)
     else:
         return torch.tensor(images), torch.tensor(labels)
@@ -397,6 +398,7 @@ def get_vision_dset(dset_name,device='cuda',x_only=False):
         data = load_coil100(x_only)
     elif dset_name == 'letterAJ':
         data = load_letterAJ(x_only)
+        return TransformDataset(data,[add_colour_dimension],x_only,device=device)
     else: set_trace()
     return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
 
@@ -512,7 +514,7 @@ def asMinutes(s):
     return '%dm %ds' % (m, s)
 
 def label_assignment_cost(labels1,labels2,label1,label2):
-    assert len(labels1) == len(labels2)
+    assert len(labels1) == len(labels2), f"len labels1 {len(labels1)} must equal len labels2 {len(labels2)}"
     return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
 
 def translate_labellings(trans_from_labels,trans_to_labels):
@@ -688,7 +690,7 @@ def votes_to_probs(multihots,prior_correct):
 def check_dir(directory):
     if not os.path.isdir(directory):
         os.makedirs(directory)
-    
+
 def torch_save(checkpoint,directory,fname):
     check_dir(directory)
     torch.save(checkpoint,os.path.join(directory,fname))

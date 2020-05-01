@@ -29,7 +29,12 @@ def rtrain_ae(ae_dict,args,should_change):
         print(f'Rtraining {aeid}')
         befores = [p.detach().cpu() for p in ae.parameters()]
         dset = utils.get_vision_dset(args.dset)
-        dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
+        if args.one_image:
+            dset.x = dset.x[:1]
+            dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),1,drop_last=True),pin_memory=False)
+            args.pretrain_epochs = 1000
+        else:
+            dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
         loss_func=nn.L1Loss(reduction='none')
         opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
         opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
@@ -47,7 +52,7 @@ def rtrain_ae(ae_dict,args,should_change):
         if should_change:
             afters = [p.detach().cpu() for p in ae.parameters()]
             for b,a in zip(befores,afters): assert not (b==a).all()
-        if args.save: 
+        if args.save:
             utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints',f'pt{aeid}.pt')
         if args.vis_pretrain:
             utils.check_ae_images(ae.enc, ae.dec, dset)
@@ -78,13 +83,13 @@ def label_single(ae_output,args):
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
         umapped_latents = None
     else:
-        min_c = 5000 if args.dset == 'letterAJ' else 500
+        min_c = 500
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
         n = -1
         if utils.get_num_labels(scanner.labels_) == args.num_clusters:
             labels = scanner.labels_
-        elif utils.get_num_labels(scanner.labels_) > args.num_clusters: 
+        elif utils.get_num_labels(scanner.labels_) > args.num_clusters:
             print(f"AE {aeid} has too MANY labels: {utils.get_num_labels(scanner.labels_)}")
             eps = 0.01
             for i in range(1000):
@@ -111,7 +116,7 @@ def label_single(ae_output,args):
                     print(f'ae {aeid} using {eps}')
                     break
                 elif set(labels) == set([-1]):
-                    for _ in range(500):
+                    for _ in range(50000):
                         labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
                         n = utils.get_num_labels(labels)
                         if n == args.num_clusters:
@@ -219,11 +224,11 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree):
                         worsttargets2 = torch.tensor(utils.compress_labels(batch_targets[worstmask2]),device=device).long()
                         worsttargets3 = torch.tensor(utils.compress_labels(batch_targets[worstmask3]),device=device).long()
                         if worstmask2.any():
-                            w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2).mean() 
+                            w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2).mean()
                             loss += w2loss
                             total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
                         if worstmask3.any():
-                            w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3).mean() 
+                            w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3).mean()
                             loss += w3loss
                             total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
                     total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
@@ -249,7 +254,7 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree):
         if args.worst3:
             for b,a in zip(befores,afters): assert not (b==a).all()
         if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
-    if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,DATASET,stacked=True)
+    if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,dset,stacked=True)
 
 def load_ae(aeid,args):
     checkpoints_dir = "checkpoints_solid" if args.solid else "checkpoints"
@@ -310,6 +315,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed',type=int,default=0)
     parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--single',action='store_true')
+    parser.add_argument('--one_image',action='store_true')
     parser.add_argument('--show_gpu_memory',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--test','-t',action='store_true')
@@ -349,11 +355,11 @@ if __name__ == "__main__":
         aeids = [0,1]
     ctx = mp.get_context("spawn")
 
-    if ARGS.short_epochs:                                                       
-        ARGS.pretrain_epochs = 1                                                
-        ARGS.epochs = 1                                                         
-        ARGS.inter_epochs = 1                                                   
-        ARGS.pretrain_epochs = 1                                                
+    if ARGS.short_epochs:
+        ARGS.pretrain_epochs = 1
+        ARGS.epochs = 1
+        ARGS.inter_epochs = 1
+        ARGS.pretrain_epochs = 1
         ARGS.meta_epochs = 2
 
     if ARGS.dset in ['MNIST','FashionMNIST']:
@@ -378,7 +384,7 @@ if __name__ == "__main__":
         ARGS.num_clusters = 100
     elif ARGS.dset == 'letterAJ':
         ARGS.image_size = 28
-        ARGS.dset_size = 18724
+        ARGS.dset_size = 18456
         ARGS.num_channels = 1
         ARGS.num_clusters = 10
 
@@ -509,8 +515,8 @@ if __name__ == "__main__":
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Generating vecs for {len(aes)} aes...")
                 vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
-            if ARGS.conc:                                                       
-                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500) 
+            if ARGS.conc:
+                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
                 vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
             with ctx.Pool(processes=len(aes)) as pool:
@@ -566,7 +572,7 @@ if __name__ == "__main__":
         # Save histories of acc, nmi and num_agrees
         summary_dict = {'acc_histories':acc_histories, 'mi_histories':mi_histories, 'num_agree_histories': num_agree_histories}
         utils.np_savez(summary_dict,exp_dir,'histories.npz')
-        
+
         # Save info for each ae, latent vecs and labels
         by_aeid = {aeid:{**vecs_and_labels[aeid],**centroids_by_id[aeid]} for aeid in set(vecs_and_labels.keys()).intersection(set(centroids_by_id.keys()))}
         for aeid,v in by_aeid.items():
