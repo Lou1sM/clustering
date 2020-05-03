@@ -3,7 +3,8 @@ import signal
 import sys
 signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
 
-from functools import partial
+import torchvision.datasets as tdatasets
+import functools
 from pdb import set_trace
 from scipy.stats import entropy
 from time import time
@@ -20,21 +21,32 @@ import umap
 import utils
 import warnings
 warnings.filterwarnings('ignore')
+from datetime import datetime
+from fastai import datasets,layers
+from pdb import set_trace
+from scipy.optimize import linear_sum_assignment
+from scipy.special import comb, factorial
+from sklearn.metrics import adjusted_rand_score
+from torch.utils import data
+import math
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import sys
+import torch
+import torch.nn as nn
+import torchvision.datasets as tdatasets
+import umap.umap_ as umap
 
 
-def rtrain_ae(ae_dict,args,should_change):
+def rtrain_ae(ae_dict,args,dl,should_change):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid,ae = ae_dict['aeid'],ae_dict['ae']
         print(f'Rtraining {aeid}')
         befores = [p.detach().cpu() for p in ae.parameters()]
-        dset = utils.get_vision_dset(args.dset)
-        if args.one_image:
-            dset.x = dset.x[:1]
-            dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),1,drop_last=True),pin_memory=False)
-            args.pretrain_epochs = 1000
-        else:
-            dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
         loss_func=nn.L1Loss(reduction='none')
         opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
         opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
@@ -343,7 +355,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    import multiprocessing as mp
+    import torch.multiprocessing as mp
     if ARGS.aeids is not None:
         aeids = ARGS.aeids
     elif ARGS.num_aes is not None:
@@ -390,14 +402,16 @@ if __name__ == "__main__":
 
 
     device = torch.device(f'cuda:{ARGS.gpu}')
-    new_ae = partial(utils.make_ae,device=device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
-    filled_pretrain = partial(rtrain_ae,args=ARGS,should_change=True)
-    filled_generate = partial(generate_vecs_single,args=ARGS)
-    filled_label = partial(label_single,args=ARGS)
-    filled_load_ae = partial(load_ae,args=ARGS)
-    filled_load_vecs = partial(load_vecs,args=ARGS)
-    filled_load_labels = partial(load_labels,args=ARGS)
-    filled_load_ensemble = partial(load_ensemble,args=ARGS)
+    new_ae = functools.partial(utils.make_ae,device=device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
+    dset = utils.get_vision_dset(ARGS.dset)
+    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
+    filled_pretrain = functools.partial(rtrain_ae,args=ARGS,should_change=True,dl=dl)
+    filled_generate = functools.partial(generate_vecs_single,args=ARGS)
+    filled_label = functools.partial(label_single,args=ARGS)
+    filled_load_ae = functools.partial(load_ae,args=ARGS)
+    filled_load_vecs = functools.partial(load_vecs,args=ARGS)
+    filled_load_labels = functools.partial(load_labels,args=ARGS)
+    filled_load_ensemble = functools.partial(load_ensemble,args=ARGS)
     device = torch.device(f'cuda:{ARGS.gpu}')
     if 1 in ARGS.sections: #Rtrain aes rather than load
         pretrain_start_time = time()
@@ -506,7 +520,7 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-            filled_train = partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree)
+            filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree)
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Training aes {list(aeids)}...")
                 [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)

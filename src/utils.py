@@ -184,11 +184,30 @@ class TransformDataset(data.Dataset):
         else:
             x, y = data
             self.x,self.y = x.to(self.device), y.to(self.device)
-            assert min([im.max() for im in self.transform(x)]) == 1
     def __len__(self): return len(self.data) if self.x_only else len(self.x)
     def __getitem__(self,idx):
         if self.x_only: return self.transform(self.x[idx]), idx
         else: return self.transform(self.x[idx]), self.y[idx], idx
+
+class TransformDataset(data.Dataset):
+    def __init__(self,data,transforms,x_only,device):
+        self.x_only,self.device=x_only,device
+        if x_only:
+            self.x = data
+            for transform in transforms:
+                self.x = transform(self.x)
+            self.x = self.x.to(self.device)
+        else:
+            self.x, self.y = data
+            for transform in transforms:
+                self.x = transform(self.x)
+            self.x.to(self.device)
+            self.x, self.y = self.x.to(self.device),self.y.to(self.device)
+    def __len__(self): return len(self.data) if self.x_only else len(self.x)
+    def __getitem__(self,idx):
+        #if self.x_only: return self.transform(self.x[idx]), idx
+        if self.x_only: return self.x[idx], idx
+        else: return self.x[idx], self.y[idx], idx
 
 class KwargTransformDataset(data.Dataset):
     def __init__(self,transforms,device,**kwdata):
