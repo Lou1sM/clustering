@@ -69,16 +69,14 @@ def rtrain_ae(ae_dict,args,dl,should_change):
         if args.vis_pretrain:
             utils.check_ae_images(ae.enc, ae.dec, dset)
 
-def generate_vecs_single(ae_dict,args):
+def generate_vecs_single(ae_dict,args,determin_dl):
     aeid, ae = ae_dict['aeid'],ae_dict['ae']
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
     else:
         device = torch.device(f'cuda:{args.gpu}')
         with torch.cuda.device(device):
-            dset = utils.get_vision_dset(args.dset)
             ae.to(device)
-            determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
             for i, (xb,yb,idx) in enumerate(determin_dl):
                 latent = ae.enc(xb)
                 latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
@@ -187,13 +185,11 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         utils.np_save(all_agree,f'../{args.dset}', 'all_agree.npy')
     return centroids_by_id, ensemble_labels_, all_agree
 
-def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree):
+def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
         befores = [p.detach().cpu() for p in ae.parameters()]
-        dset = utils.get_vision_dset(args.dset)
-        dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
         loss_func=nn.L1Loss(reduction='none')
         ce_loss_func = nn.CrossEntropyLoss()
         opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
@@ -202,6 +198,7 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree):
         if args.worst3:
             opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
             opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
+        print(set(targets))
         targets = torch.tensor(targets,device='cuda')
         all_agree = torch.tensor(all_agree,device=device)
         for epoch in range(args.epochs):
@@ -403,16 +400,17 @@ if __name__ == "__main__":
 
     device = torch.device(f'cuda:{ARGS.gpu}')
     new_ae = functools.partial(utils.make_ae,device=device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
-    dset = utils.get_vision_dset(ARGS.dset)
-    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
+    with torch.cuda.device(device):
+        dset = utils.get_vision_dset(ARGS.dset)
+        dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
+        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),ARGS.gen_batch_size,drop_last=False),pin_memory=False)
     filled_pretrain = functools.partial(rtrain_ae,args=ARGS,should_change=True,dl=dl)
-    filled_generate = functools.partial(generate_vecs_single,args=ARGS)
+    filled_generate = functools.partial(generate_vecs_single,args=ARGS,determin_dl=determin_dl)
     filled_label = functools.partial(label_single,args=ARGS)
     filled_load_ae = functools.partial(load_ae,args=ARGS)
     filled_load_vecs = functools.partial(load_vecs,args=ARGS)
     filled_load_labels = functools.partial(load_labels,args=ARGS)
     filled_load_ensemble = functools.partial(load_ensemble,args=ARGS)
-    device = torch.device(f'cuda:{ARGS.gpu}')
     if 1 in ARGS.sections: #Rtrain aes rather than load
         pretrain_start_time = time()
         aes = []
@@ -520,7 +518,7 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-            filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree)
+            filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dl=dl)
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Training aes {list(aeids)}...")
                 [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
@@ -559,10 +557,11 @@ if __name__ == "__main__":
             print('L MI', [rmi_func(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids])
             print('Ensemble Scores:')
             print('Acc:',acc)
-            print('Acc agree:', racc(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('NMI:',mi)
-            print('NMI agree:',rmi_func(ensemble_labels[all_agree],gt_labels[all_agree]))
             print('Num agrees:', all_agree.sum(), round(all_agree.sum()/ARGS.dset_size,4))
+            if all_agree.any():
+                print('Acc agree:', racc(ensemble_labels[all_agree],gt_labels[all_agree]))
+                print('NMI agree:',rmi_func(ensemble_labels[all_agree],gt_labels[all_agree]))
             print(f'Meta Epoch time: {utils.asMinutes(time()-meta_epoch_start_time)}')
             if new_best_acc <= best_acc:
                 count += 1
