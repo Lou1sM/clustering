@@ -94,7 +94,7 @@ def label_single(ae_output,args):
         umapped_latents = None
     else:
         min_c = 500
-        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,random_state=42).fit_transform(latents.squeeze())
+        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,n_components=5,random_state=42).fit_transform(latents.squeeze())
         scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
         n = -1
         if utils.get_num_labels(scanner.labels_) == args.num_clusters:
@@ -185,7 +185,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         utils.np_save(all_agree,f'../{args.dset}', 'all_agree.npy')
     return centroids_by_id, ensemble_labels_, all_agree
 
-def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl):
+def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl,sharing_ablation):
     device = torch.device(f'cuda:{args.gpu}')
     with torch.cuda.device(device):
         aeid, ae = ae_dict['aeid'],ae_dict['ae']
@@ -198,9 +198,12 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl):
         if args.worst3:
             opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
             opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
-        print(set(targets))
-        targets = torch.tensor(targets,device='cuda')
-        all_agree = torch.tensor(all_agree,device=device)
+        if sharing_ablation:
+            targets = torch.tensor(targets[aeid]['labels'],device='cuda')
+            full_mask = targets >= 0
+        else:
+            targets = torch.tensor(targets,device='cuda')
+            full_mask = torch.tensor(all_agree,device=device)
         for epoch in range(args.epochs):
             total_rloss = 0.
             total_loss = 0.
@@ -215,7 +218,7 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl):
                 batch_targets = targets[idx]
                 rpred = ae.dec(utils.noiseify(latent,args.noise))
                 rloss = loss_func(rpred,xb)
-                mask = all_agree[idx]
+                mask = full_mask[idx]
                 if not mask.any():
                     loss = rloss.mean()
                 else:
@@ -325,6 +328,7 @@ if __name__ == "__main__":
     parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--one_image',action='store_true')
+    parser.add_argument('--sharing_ablation',action='store_true')
     parser.add_argument('--show_gpu_memory',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--test','-t',action='store_true')
@@ -396,7 +400,6 @@ if __name__ == "__main__":
         ARGS.dset_size = 18456
         ARGS.num_channels = 1
         ARGS.num_clusters = 10
-
 
     device = torch.device(f'cuda:{ARGS.gpu}')
     new_ae = functools.partial(utils.make_ae,device=device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
@@ -518,7 +521,14 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
-            filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dl=dl)
+            if ARGS.sharing_ablation:
+                with ctx.Pool(processes=len(aes)) as pool:
+                    print(f"Loading vecs for {list(aeids)}...")
+                    labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels, aeids)
+                labels = utils.dictify_list(labels,key='aeid')
+                filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dl=dl,sharing_ablation=True)
+            else:
+                filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dl=dl,sharing_ablation=False)
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Training aes {list(aeids)}...")
                 [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
