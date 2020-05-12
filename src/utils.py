@@ -89,60 +89,61 @@ class Generator(nn.Module):
         return self.main(inp)
 
 class GeneratorStacked(nn.Module):
-    def __init__(self, nz, ngf, nc, output_size, dropout_p=0.):
+    def __init__(self, nz, ngf, nc, output_size, device, dropout_p=0.):
         super(GeneratorStacked, self).__init__()
         self.dropout = torch.nn.Dropout(p=dropout_p)
         self.output_size = output_size
+        self.device = device
         self.block1 = nn.Sequential(
-            nn.ConvTranspose2d( nz, 256, 4, 1, 1, bias=False),
+            nn.ConvTranspose2d( nz, 256, 4, 1, 1, bias=False).to(device),
             nn.BatchNorm2d(ngf * 8),
             nn.ReLU(True),
             self.dropout)
         self.block2 = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False).to(device),
             nn.BatchNorm2d(ngf * 4),
             nn.ReLU(True),
             self.dropout)
         self.block3 = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False).to(device),
             nn.BatchNorm2d(ngf * 2),
             nn.ReLU(True),
             self.dropout)
         if output_size == 16:
             self.block4 = nn.Sequential(
-                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False).to(device),
                 nn.BatchNorm2d(32),
                 nn.ReLU(True),
                 self.dropout)
         elif output_size == 28:
             self.block4 = nn.Sequential(
-                nn.ConvTranspose2d(64, 32, 4, 2, 2, bias=False),
+                nn.ConvTranspose2d(64, 32, 4, 2, 2, bias=False).to(device),
                 nn.BatchNorm2d(32),
                 nn.ReLU(True),
                 self.dropout)
             self.block5 = nn.Sequential(
-                nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False).to(device),
                 nn.Tanh()
             )
         elif output_size in [32,128]:
             self.block4 = nn.Sequential(
-                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False),
+                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False).to(device),
                 nn.BatchNorm2d(32),
                 nn.ReLU(True),
                 self.dropout)
             if output_size == 32:
                 self.block5 = nn.Sequential(
-                    nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False),
+                    nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False).to(device),
                     nn.Tanh()
                 )
             elif output_size == 128:
                 self.block5 = nn.Sequential(
-                    nn.ConvTranspose2d(32, 32, 4, 4, 0, bias=False),
+                    nn.ConvTranspose2d(32, 32, 4, 4, 0, bias=False).to(device),
                     nn.BatchNorm2d(32),
                     nn.ReLU(True),
                     self.dropout)
                 self.block6 = nn.Sequential(
-                    nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=False),
+                    nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=False).to(device),
                     nn.Tanh()
                 )
 
@@ -341,11 +342,9 @@ class SuperAE(nn.Module):
         return [dec(x) for dec in self.decs]
 
 def make_ae(aeid,device,NZ,image_size,num_channels):
-    with torch.cuda.device(device):
-        enc_b1, enc_b2 = get_enc_blocks('cuda',NZ,num_channels)
-        enc = EncoderStacked(enc_b1,enc_b2)
-        dec = GeneratorStacked(nz=NZ,ngf=32,nc=num_channels,output_size=image_size,dropout_p=0.)
-        dec.to(device)
+    enc_b1, enc_b2 = get_enc_blocks(device,NZ,num_channels)
+    enc = EncoderStacked(enc_b1,enc_b2)
+    dec = GeneratorStacked(nz=NZ,ngf=32,nc=num_channels,output_size=image_size,device=device,dropout_p=0.)
     return AE(enc,dec,aeid)
 
 def get_enc_blocks(device, latent_size, num_channels):
@@ -400,7 +399,7 @@ def load_letterAJ(x_only, data_dir='../letterAJ'):
     else:
         return torch.tensor(images), torch.tensor(labels)
 
-def get_vision_dset(dset_name,device='cuda',x_only=False):
+def get_vision_dset(dset_name,device,x_only=False):
     if dset_name == 'MNIST':
         d=tdatasets.MNIST(root='~/unsupervised_object_learning/MNIST/data',train=True,download=True)
         data = d.train_data if x_only else (d.train_data, d.train_labels)

@@ -42,47 +42,43 @@ import umap.umap_ as umap
 
 
 def rtrain_ae(ae_dict,args,dl,should_change):
-    device = torch.device(f'cuda:{args.gpu}')
-    with torch.cuda.device(device):
-        aeid,ae = ae_dict['aeid'],ae_dict['ae']
-        print(f'Rtraining {aeid}')
-        befores = [p.detach().cpu() for p in ae.parameters()]
-        loss_func=nn.L1Loss(reduction='none')
-        opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
-        opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
-        for epoch in range(args.pretrain_epochs):
-            total_loss = 0.
-            for i,(xb,yb,idx) in enumerate(dl):
-                latent = ae.enc(xb)
-                pred = ae.dec(utils.noiseify(latent,args.noise))
-                loss = loss_func(pred,xb).mean()
-                loss.backward(); opt.step(); opt.zero_grad()
-                total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
-                if args.test: break
-            print(f'Rtraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
+    aeid,ae = ae_dict['aeid'],ae_dict['ae']
+    print(f'Rtraining {aeid}')
+    befores = [p.detach().cpu().clone() for p in ae.parameters()]
+    loss_func=nn.L1Loss(reduction='none')
+    opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
+    opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
+    for epoch in range(args.pretrain_epochs):
+        total_loss = 0.
+        for i,(xb,yb,idx) in enumerate(dl):
+            latent = ae.enc(xb)
+            pred = ae.dec(utils.noiseify(latent,args.noise))
+            loss = loss_func(pred,xb).mean()
+            loss.backward(); opt.step(); opt.zero_grad()
+            total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
             if args.test: break
-        if should_change:
-            afters = [p.detach().cpu() for p in ae.parameters()]
-            for b,a in zip(befores,afters): assert not (b==a).all()
-        if args.save:
-            utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints',f'pt{aeid}.pt')
-        if args.vis_pretrain:
-            utils.check_ae_images(ae.enc, ae.dec, dset)
+        print(f'Rtraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
+        if args.test: break
+    if should_change:
+        afters = [p.detach().cpu() for p in ae.parameters()]
+        for b,a in zip(befores,afters):
+            assert not (b==a).all()
+    if args.save:
+        utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints',f'pt{aeid}.pt')
+    if args.vis_pretrain:
+        utils.check_ae_images(ae.enc, ae.dec, dset)
 
 def generate_vecs_single(ae_dict,args,determin_dl):
     aeid, ae = ae_dict['aeid'],ae_dict['ae']
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
     else:
-        device = torch.device(f'cuda:{args.gpu}')
-        with torch.cuda.device(device):
-            ae.to(device)
-            for i, (xb,yb,idx) in enumerate(determin_dl):
-                latent = ae.enc(xb)
-                latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
-                latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
-            if args.save:
-                utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',)
+        for i, (xb,yb,idx) in enumerate(determin_dl):
+            latent = ae.enc(xb)
+            latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
+            latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
+        if args.save:
+            utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',)
     return {'aeid':aeid,'latents':latents}
 
 def label_single(ae_output,args):
@@ -186,91 +182,89 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     return centroids_by_id, ensemble_labels_, all_agree
 
 def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl,sharing_ablation):
-    device = torch.device(f'cuda:{args.gpu}')
-    with torch.cuda.device(device):
-        aeid, ae = ae_dict['aeid'],ae_dict['ae']
-        befores = [p.detach().cpu() for p in ae.parameters()]
-        loss_func=nn.L1Loss(reduction='none')
-        ce_loss_func = nn.CrossEntropyLoss()
-        opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
-        opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
-        opt.add_param_group({'params':ae.pred.parameters(),'lr':1e-3})
-        if args.worst3:
-            opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
-            opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
-        if sharing_ablation:
-            targets = torch.tensor(targets[aeid]['labels'],device='cuda')
-            full_mask = targets >= 0
-        else:
-            targets = torch.tensor(targets,device='cuda')
-            full_mask = torch.tensor(all_agree,device=device)
-        for epoch in range(args.epochs):
-            total_rloss = 0.
-            total_loss = 0.
-            total_gloss_ = 0.
-            total_gloss = 0.
-            total_crloss = 0.
-            total_w2loss = 0.
-            total_w3loss = 0.
-            rloss_list = []
-            for i, (xb,yb,idx) in enumerate(dl):
-                latent  = ae.enc(xb)
-                batch_targets = targets[idx]
-                rpred = ae.dec(utils.noiseify(latent,args.noise))
-                rloss = loss_func(rpred,xb)
-                mask = full_mask[idx]
-                if not mask.any():
-                    loss = rloss.mean()
-                else:
-                    lin_pred = ae.pred(utils.noiseify(latent[mask],args.noise)[:,:,0,0])
-                    gauss_loss = ce_loss_func(lin_pred,batch_targets[mask]).mean()
-                    loss = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + args.rlmbda*rloss.mean()
-                    if not mask.all():
-                        loss += rloss[~mask].mean()
-                    if args.worst3:
-                        wor1 = (batch_targets == worst3[0])
-                        wor2 = (batch_targets == worst3[1])
-                        wor3 = (batch_targets == worst3[2])
-                        worstmask2 = (wor1 + wor2)*mask
-                        worstmask3 = (wor1 + wor2 + wor3)*mask
-                        worsttargets2 = torch.tensor(utils.compress_labels(batch_targets[worstmask2]),device=device).long()
-                        worsttargets3 = torch.tensor(utils.compress_labels(batch_targets[worstmask3]),device=device).long()
-                        if worstmask2.any():
-                            w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2).mean()
-                            loss += w2loss
-                            total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
-                        if worstmask3.any():
-                            w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3).mean()
-                            loss += w3loss
-                            total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
-                    total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
-                    total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
-                assert loss != 0
-                loss.backward(); opt.step(); opt.zero_grad()
-                if args.test: break
+    aeid, ae = ae_dict['aeid'],ae_dict['ae']
+    befores = [p.detach().cpu() for p in ae.parameters()]
+    loss_func=nn.L1Loss(reduction='none')
+    ce_loss_func = nn.CrossEntropyLoss()
+    opt = torch.optim.Adam(params = ae.enc.parameters(), lr=args.enc_lr)
+    opt.add_param_group({'params':ae.dec.parameters(),'lr':args.dec_lr})
+    opt.add_param_group({'params':ae.pred.parameters(),'lr':1e-3})
+    if args.worst3:
+        opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
+        opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
+    if sharing_ablation:
+        targets = torch.tensor(targets[aeid]['labels'],device=args.device)
+        full_mask = targets >= 0
+    else:
+        targets = torch.tensor(targets,device=args.device)
+        full_mask = torch.tensor(all_agree,device=args.device)
+    for epoch in range(args.epochs):
+        total_rloss = 0.
+        total_loss = 0.
+        total_gloss_ = 0.
+        total_gloss = 0.
+        total_crloss = 0.
+        total_w2loss = 0.
+        total_w3loss = 0.
+        rloss_list = []
+        for i, (xb,yb,idx) in enumerate(dl):
+            latent  = ae.enc(xb)
+            batch_targets = targets[idx]
+            rpred = ae.dec(utils.noiseify(latent,args.noise))
+            rloss = loss_func(rpred,xb)
+            mask = full_mask[idx]
+            if not mask.any():
+                loss = rloss.mean()
+            else:
+                lin_pred = ae.pred(utils.noiseify(latent[mask],args.noise)[:,:,0,0])
+                gauss_loss = ce_loss_func(lin_pred,batch_targets[mask]).mean()
+                loss = torch.clamp(gauss_loss, min=args.clamp_gauss_loss).mean() + args.rlmbda*rloss.mean()
+                if not mask.all():
+                    loss += rloss[~mask].mean()
+                if args.worst3:
+                    wor1 = (batch_targets == worst3[0])
+                    wor2 = (batch_targets == worst3[1])
+                    wor3 = (batch_targets == worst3[2])
+                    worstmask2 = (wor1 + wor2)*mask
+                    worstmask3 = (wor1 + wor2 + wor3)*mask
+                    worsttargets2 = torch.tensor(utils.compress_labels(batch_targets[worstmask2]),device=args.device).long()
+                    worsttargets3 = torch.tensor(utils.compress_labels(batch_targets[worstmask3]),device=args.device).long()
+                    if worstmask2.any():
+                        w2loss = ce_loss_func(ae.pred2(latent[worstmask2,:,0,0]),worsttargets2).mean()
+                        loss += w2loss
+                        total_w2loss = total_w2loss*((i+1)/(i+2)) + w2loss.mean().item()*(1/(i+2))
+                    if worstmask3.any():
+                        w3loss = ce_loss_func(ae.pred3(latent[worstmask3,:,0,0]),worsttargets3).mean()
+                        loss += w3loss
+                        total_w3loss = total_w3loss*((i+1)/(i+3)) + w3loss.mean().item()*(1/(i+3))
+                total_rloss = total_rloss*((i+1)/(i+2)) + rloss.mean().item()*(1/(i+2))
+                total_gloss = total_gloss*((i+1)/(i+2)) + gauss_loss.mean().item()*(1/(i+2))
+            assert loss != 0
+            loss.backward(); opt.step(); opt.zero_grad()
             if args.test: break
-        print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
-        for epoch in range(args.inter_epochs):
-            epoch_loss = 0
-            for i, (xb,yb,idx) in enumerate(dl):
-                latent = ae.enc(xb)
-                latent = utils.noiseify(latent,args.noise)
-                pred = ae.dec(latent)
-                loss = loss_func(pred,xb).mean()
-                loss.backward(); opt.step(); opt.zero_grad()
-                epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
-                if args.test: break
+        if args.test: break
+    print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
+    for epoch in range(args.inter_epochs):
+        epoch_loss = 0
+        for i, (xb,yb,idx) in enumerate(dl):
+            latent = ae.enc(xb)
+            latent = utils.noiseify(latent,args.noise)
+            pred = ae.dec(latent)
+            loss = loss_func(pred,xb).mean()
+            loss.backward(); opt.step(); opt.zero_grad()
+            epoch_loss = epoch_loss*((i+1)/(i+2)) + loss*(1/(i+2))
             if args.test: break
-            if epoch_loss < 0.02: break
-        afters = [p.detach().cpu() for p in list(ae.enc.parameters()) + list(ae.dec.parameters())]
-        if args.worst3:
-            for b,a in zip(befores,afters): assert not (b==a).all()
-        if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
+        if args.test: break
+        if epoch_loss < 0.02: break
+    afters = [p.detach().cpu() for p in list(ae.enc.parameters()) + list(ae.dec.parameters())]
+    if args.worst3:
+        for b,a in zip(befores,afters): assert not (b==a).all()
+    if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
     if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,dset,stacked=True)
 
 def load_ae(aeid,args):
     checkpoints_dir = "checkpoints_solid" if args.solid else "checkpoints"
-    chkpt = torch.load(f'../{args.dset}/{checkpoints_dir}/pt{aeid}.pt', map_location=f'cuda:{args.gpu}')
+    chkpt = torch.load(f'../{args.dset}/{checkpoints_dir}/pt{aeid}.pt', map_location=args.device)
     revived_ae = utils.AE(chkpt['enc'],chkpt['dec'],aeid)
     return {'aeid': aeid, 'ae':revived_ae}
 
@@ -308,6 +302,7 @@ if __name__ == "__main__":
     parser.add_argument('--clmbda',type=float,default=1.)
     parser.add_argument('--conc',action='store_true')
     parser.add_argument('--dec_lr',type=float,default=1e-3)
+    parser.add_argument('--disable_cuda',action='store_true')
     parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST','USPS','CIFAR10','coil-100', 'letterAJ'])
     parser.add_argument('--enc_lr',type=float,default=1e-3)
     parser.add_argument('--epochs',type=int,default=8)
@@ -401,12 +396,14 @@ if __name__ == "__main__":
         ARGS.num_channels = 1
         ARGS.num_clusters = 10
 
-    device = torch.device(f'cuda:{ARGS.gpu}')
-    new_ae = functools.partial(utils.make_ae,device=device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
-    with torch.cuda.device(device):
-        dset = utils.get_vision_dset(ARGS.dset)
-        dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
-        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),ARGS.gen_batch_size,drop_last=False),pin_memory=False)
+    if not ARGS.disable_cuda and torch.cuda.is_available():
+        ARGS.device = torch.device(f'cuda:{ARGS.gpu}')
+    else:
+        ARGS.device = torch.device('cpu')
+    new_ae = functools.partial(utils.make_ae,device=ARGS.device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
+    dset = utils.get_vision_dset(ARGS.dset,ARGS.device)
+    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
+    determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),ARGS.gen_batch_size,drop_last=False),pin_memory=False)
     filled_pretrain = functools.partial(rtrain_ae,args=ARGS,should_change=True,dl=dl)
     filled_generate = functools.partial(generate_vecs_single,args=ARGS,determin_dl=determin_dl)
     filled_label = functools.partial(label_single,args=ARGS)
@@ -418,9 +415,8 @@ if __name__ == "__main__":
         pretrain_start_time = time()
         aes = []
         print(f"Instantiating {len(aeids)} aes...")
-        with torch.cuda.device(device):
-            for aeid in aeids:
-                aes.append({'aeid':aeid, 'ae':new_ae(aeid)})
+        for aeid in aeids:
+            aes.append({'aeid':aeid, 'ae':new_ae(aeid)})
         with ctx.Pool(processes=len(aes)) as pool:
             print(f"Pretraining {len(aes)} aes...")
             r=[filled_pretrain(ae) for ae in aes] if ARGS.single else pool.map(filled_pretrain, aes)
@@ -439,8 +435,7 @@ if __name__ == "__main__":
         generate_start_time = time()
         with ctx.Pool(processes=len(aes)) as pool:
             print(f"Generating vecs for {len(aes)} aes...")
-            with torch.cuda.device(device):
-                vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
+            vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
         if ARGS.conc:
             concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
             vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
@@ -448,8 +443,7 @@ if __name__ == "__main__":
     elif 3 in ARGS.sections or 4 in ARGS.sections:
         with ctx.Pool(processes=len(aes)) as pool:
             print(f"Loading vecs for {len(aes)} aes...")
-            with torch.cuda.device(device):
-                vecs = [filled_load_vecs(ae) for ae in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
+            vecs = [filled_load_vecs(ae) for ae in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
         assert all([v['latents'].shape[1] == ARGS.NZ for v in vecs])
 
     from sklearn.metrics import normalized_mutual_info_score as mi_func
@@ -518,9 +512,9 @@ if __name__ == "__main__":
                 except: set_trace()
                 for aedict in copied_aes:
                     try: assert(aedict['ae'].pred.in_features == ARGS.NZ)
-                    except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=device)
-                    aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=device)
-                    aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=device)
+                    except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=ARGS.device)
+                    aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=ARGS.device)
+                    aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=ARGS.device)
             if ARGS.sharing_ablation:
                 with ctx.Pool(processes=len(aes)) as pool:
                     print(f"Loading vecs for {list(aeids)}...")
@@ -543,9 +537,8 @@ if __name__ == "__main__":
                 vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Generating labels for {len(aes)} aes...")
-                with torch.cuda.device(device):
-                    print(f"Labelling vecs for {len(aes)} aes...")
-                    labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+                print(f"Labelling vecs for {len(aes)} aes...")
+                labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
             if ARGS.scatter_clusters:
                 selected = random.choice(labels)['umapped_latents']
                 utils.scatter_clusters(selected, gt_labels,show=True)
