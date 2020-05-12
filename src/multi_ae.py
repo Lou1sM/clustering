@@ -452,8 +452,8 @@ if __name__ == "__main__":
     labels_dir = f'../{ARGS.dset}/labels/'
     try: gt_labels = np.load(os.path.join(labels_dir,'gt_labels.npy'))
     except FileNotFoundError:
-        d = utils.get_vision_dset(ARGS.dset)
-        set_trace()
+        print('Loading gt labels directly from the dset')
+        d = utils.get_vision_dset(ARGS.dset,device=ARGS.device)
         gt_labels = d.y.cpu().detach().numpy()
         utils.np_save(gt_labels,labels_dir,'gt_labels.npy')
     if 3 in ARGS.sections:
