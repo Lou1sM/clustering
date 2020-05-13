@@ -11,7 +11,7 @@ from time import time
 from torch.utils import data
 import copy
 import gc
-import hdbscan
+from sklearn.mixture import GaussianMixture
 import numpy as np
 import os
 import random
@@ -89,59 +89,9 @@ def label_single(ae_output,args):
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
         umapped_latents = None
     else:
-        min_c = 500
-        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,n_components=5,random_state=42).fit_transform(latents.squeeze())
-        scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
-        n = -1
-        if utils.get_num_labels(scanner.labels_) == args.num_clusters:
-            labels = scanner.labels_
-        elif utils.get_num_labels(scanner.labels_) > args.num_clusters:
-            print(f"AE {aeid} has too MANY labels: {utils.get_num_labels(scanner.labels_)}")
-            eps = 0.01
-            for i in range(1000):
-                labels = hdbscan.hdbscan_._tree_to_labels(umapped_latents, scanner.single_linkage_tree_.to_numpy(), cluster_selection_epsilon=eps, min_cluster_size=min_c)[0]
-                n = utils.get_num_labels(labels)
-                if n == args.num_clusters:
-                    break
-                elif n > args.num_clusters:
-                    eps += 0.01
-                else:
-                    eps -= 0.001
-        else:
-            eps = 1.
-            print(f"AE {aeid} has too FEW labels: {utils.get_num_labels(scanner.labels_)}")
-            best_eps = eps
-            most_n = 0
-            for i in range(1000):
-                labels = scanner.single_linkage_tree_.get_clusters(eps,min_cluster_size=min_c)
-                n = utils.get_num_labels(labels)
-                if n > most_n:
-                    most_n = n
-                    best_eps = eps
-                if n == args.num_clusters:
-                    print(f'ae {aeid} using {eps}')
-                    break
-                elif set(labels) == set([-1]):
-                    for _ in range(50000):
-                        labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
-                        n = utils.get_num_labels(labels)
-                        if n == args.num_clusters:
-                            print('having to use min_c', min_c)
-                            break
-                        elif n > args.num_clusters:
-                            eps += 0.01
-                        else:
-                            min_c -= 1
-                    print(888)
-                    break
-
-                elif n < args.num_clusters:
-                    if i > 100:
-                        print(n,i)
-                    eps -= 0.01
-                else:
-                    print(f'ae {aeid} overshot to {n} with {eps} at {i}')
-                    eps *= 1.1
+        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,n_components=2,random_state=42).fit_transform(latents.squeeze())
+        c = GaussianMixture(n_components=10)
+        labels = c.fit_predict(umapped_latents)
         if args.save:
             utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy')
             utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{aeid}.npy')
@@ -181,7 +131,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         utils.np_save(all_agree,f'../{args.dset}', 'all_agree.npy')
     return centroids_by_id, ensemble_labels_, all_agree
 
-def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl,sharing_ablation):
+def train_ae(ae_dict,args,worst3,targets,all_agree,dl,sharing_ablation):
     aeid, ae = ae_dict['aeid'],ae_dict['ae']
     befores = [p.detach().cpu() for p in ae.parameters()]
     loss_func=nn.L1Loss(reduction='none')
@@ -201,12 +151,9 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl,sharing_ab
     for epoch in range(args.epochs):
         total_rloss = 0.
         total_loss = 0.
-        total_gloss_ = 0.
         total_gloss = 0.
-        total_crloss = 0.
         total_w2loss = 0.
         total_w3loss = 0.
-        rloss_list = []
         for i, (xb,yb,idx) in enumerate(dl):
             latent  = ae.enc(xb)
             batch_targets = targets[idx]
@@ -243,7 +190,7 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl,sharing_ab
             loss.backward(); opt.step(); opt.zero_grad()
             if args.test: break
         if args.test: break
-    print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, CRLoss: {round(total_crloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
+    print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
     for epoch in range(args.inter_epochs):
         epoch_loss = 0
         for i, (xb,yb,idx) in enumerate(dl):
@@ -261,6 +208,7 @@ def train_ae(ae_dict,args,centroids_by_id,worst3,targets,all_agree,dl,sharing_ab
         for b,a in zip(befores,afters): assert not (b==a).all()
     if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
     if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,dset,stacked=True)
+
 
 def load_ae(aeid,args):
     checkpoints_dir = "checkpoints_solid" if args.solid else "checkpoints"
@@ -520,9 +468,9 @@ if __name__ == "__main__":
                     print(f"Loading vecs for {list(aeids)}...")
                     labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels, aeids)
                 labels = utils.dictify_list(labels,key='aeid')
-                filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dl=dl,sharing_ablation=True)
+                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dl=dl,sharing_ablation=True)
             else:
-                filled_train = functools.partial(train_ae,args=ARGS,centroids_by_id=centroids_by_id,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dl=dl,sharing_ablation=False)
+                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dl=dl,sharing_ablation=False)
             with ctx.Pool(processes=len(aes)) as pool:
                 print(f"Training aes {list(aeids)}...")
                 [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
@@ -532,7 +480,6 @@ if __name__ == "__main__":
                 print(f"Generating vecs for {len(aes)} aes...")
                 vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
             if ARGS.conc:
-                scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=500)
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
                 vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
             with ctx.Pool(processes=len(aes)) as pool:
