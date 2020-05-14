@@ -11,6 +11,7 @@ from time import time
 from torch.utils import data
 import copy
 import gc
+import hdbscan
 from sklearn.mixture import GaussianMixture
 import numpy as np
 import os
@@ -90,8 +91,65 @@ def label_single(ae_output,args):
         umapped_latents = None
     else:
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,n_components=2,random_state=42).fit_transform(latents.squeeze())
-        c = GaussianMixture(n_components=10)
-        labels = c.fit_predict(umapped_latents)
+        if args.clusterer == 'GMM':
+            c = GaussianMixture(n_components=10)
+            labels = c.fit_predict(umapped_latents)
+        elif args.clusterer == 'HDBSCAN':
+            min_c = 500
+            scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
+            n = -1
+            if utils.get_num_labels(scanner.labels_) == args.num_clusters:
+                labels = scanner.labels_
+            elif utils.get_num_labels(scanner.labels_) > args.num_clusters:
+                print(f"AE {aeid} has too MANY labels: {utils.get_num_labels(scanner.labels_)}")
+                eps = 0.01
+                for i in range(1000):
+                    labels = hdbscan.hdbscan_._tree_to_labels(umapped_latents, scanner.single_linkage_tree_.to_numpy(), cluster_selection_epsilon=eps, min_cluster_size=min_c)[0]
+                    n = utils.get_num_labels(labels)
+                    if n == args.num_clusters:
+                        break
+                    elif n > args.num_clusters:
+                        eps += 0.01
+                    else:
+                        eps -= 0.001
+            else:
+                eps = 1.
+                print(f"AE {aeid} has too FEW labels: {utils.get_num_labels(scanner.labels_)}")
+                best_eps = eps
+                most_n = 0
+                for i in range(1000):
+                    labels = scanner.single_linkage_tree_.get_clusters(eps,min_cluster_size=min_c)
+                    n = utils.get_num_labels(labels)
+                    if n > most_n:
+                        most_n = n
+                        best_eps = eps
+                    if n == args.num_clusters:
+                        print(f'ae {aeid} using {eps}')
+                        break
+                    elif set(labels) == set([-1]):
+                        for _ in range(50000):
+                            labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
+                            n = utils.get_num_labels(labels)
+                            if n == args.num_clusters:
+                                print('having to use min_c', min_c)
+                                break
+                            elif n > args.num_clusters:
+                                print(f"overshot inner to {n} with {min_c}, {eps}")
+                                eps += 0.01
+                            else:
+                                min_c -= 1
+                                if min_c == 1: break
+                        print(888)
+                        break
+
+                    elif n < args.num_clusters:
+                        if i > 100:
+                            print(n,i)
+                        eps -= 0.01
+                    else:
+                        print(f'ae {aeid} overshot to {n} with {eps} at {i}')
+                        eps *= 1.1
+
         if args.save:
             utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy')
             utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{aeid}.npy')
@@ -248,6 +306,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size',type=int,default=64)
     parser.add_argument('--clamp_gauss_loss',type=float,default=0.1)
     parser.add_argument('--clmbda',type=float,default=1.)
+    parser.add_argument('--clusterer',type=str,default='HDBSCAN',choices=['HDBSCAN','GMM'])
     parser.add_argument('--conc',action='store_true')
     parser.add_argument('--dec_lr',type=float,default=1e-3)
     parser.add_argument('--disable_cuda',action='store_true')
