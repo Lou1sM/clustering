@@ -85,9 +85,11 @@ def generate_vecs_single(ae_dict,args,determin_dl):
 def label_single(ae_output,args):
     aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
+        print(args.dset_size)
         as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
         remainder = np.zeros(args.dset_size%args.num_clusters)
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
+        print(labels.shape)
         umapped_latents = None
     else:
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,n_components=2,random_state=42).fit_transform(latents.squeeze())
@@ -139,7 +141,6 @@ def label_single(ae_output,args):
                             else:
                                 min_c -= 1
                                 if min_c == 1: break
-                        print(888)
                         break
 
                     elif n < args.num_clusters:
@@ -310,7 +311,7 @@ if __name__ == "__main__":
     parser.add_argument('--conc',action='store_true')
     parser.add_argument('--dec_lr',type=float,default=1e-3)
     parser.add_argument('--disable_cuda',action='store_true')
-    parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST','USPS','CIFAR10','coil-100', 'letterAJ'])
+    parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST','USPS','MNISTtest','CIFAR10','coil-100', 'letterAJ'])
     parser.add_argument('--enc_lr',type=float,default=1e-3)
     parser.add_argument('--epochs',type=int,default=8)
     parser.add_argument('--exp_name',type=str,default='try')
@@ -385,6 +386,11 @@ if __name__ == "__main__":
     elif ARGS.dset == 'USPS':
         ARGS.image_size = 16
         ARGS.dset_size = 7291
+        ARGS.num_channels = 1
+        ARGS.num_clusters = 10
+    elif ARGS.dset == 'MNISTtest':
+        ARGS.image_size = 28
+        ARGS.dset_size = 10000
         ARGS.num_channels = 1
         ARGS.num_clusters = 10
     elif ARGS.dset == 'CIFAR10':
