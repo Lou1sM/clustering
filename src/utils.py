@@ -400,17 +400,26 @@ def load_letterAJ(x_only, data_dir='../letterAJ'):
         return torch.tensor(images), torch.tensor(labels)
 
 def get_vision_dset(dset_name,device,x_only=False):
-    if dset_name == 'MNIST':
-        d=tdatasets.MNIST(root='~/unsupervised_object_learning/MNIST/data',train=True,download=True)
-        data = d.train_data if x_only else (d.train_data, d.train_labels)
+    dirpath = f'~/unsupervised_object_learning/{dset_name}/data'
+    if dset_name in ['MNISTfull', 'MNISTtest']:
+        dtest=tdatasets.MNIST(root=dirpath,train=False,download=True)
+        x, y = dtest.data, dtest.targets
+        if dset_name == 'MNISTfull':
+            dtrain=tdatasets.MNIST(root=dirpath,train=True,download=True)
+            x = torch.cat([dtrain.data,x])
+            y = torch.cat([dtrain.targets,y])
+        data = x if x_only else (x,y)
     elif dset_name == 'FashionMNIST':
-        d=tdatasets.FashionMNIST(root='~/unsupervised_object_learning/FashionMNIST/data',train=True,download=True)
-        data = d.train_data if x_only else (d.train_data, d.train_labels)
+        dtrain=tdatasets.FashionMNIST(root=dirpath,train=True,download=True)
+        dtest=tdatasets.FashionMNIST(root=dirpath,train=False,download=True)
+        x = torch.cat([dtrain.data,dtest.data])
+        y = torch.cat([dtrain.targets,dtest.targets])
+        data = x if x_only else (x,y)
     elif dset_name == 'USPS':
-        d=tdatasets.USPS(root='~/unsupervised_object_learning/USPS/data',train=True,download=True)
+        d=tdatasets.USPS(root=dirpath,train=True,download=True)
         data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
     elif dset_name == 'CIFAR10':
-        d=tdatasets.CIFAR10(root='~/unsupervised_object_learning/CIFAR10/data',train=True,download=True)
+        d=tdatasets.CIFAR10(root=dirpath,train=True,download=True)
         data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
     elif dset_name == 'coil-100':
         data = load_coil100(x_only)
@@ -713,9 +722,11 @@ def torch_save(checkpoint,directory,fname):
     check_dir(directory)
     torch.save(checkpoint,os.path.join(directory,fname))
 
-def np_save(array,directory,fname):
+def np_save(array,directory,fname,verbose):
     check_dir(directory)
-    np.save(os.path.join(directory,fname),array)
+    save_path = os.path.join(directory,fname)
+    if verbose: print('Saving to', save_path)
+    np.save(save_path,array)
 
 def np_savez(data_dict,directory,fname):
     check_dir(directory)

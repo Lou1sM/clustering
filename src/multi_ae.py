@@ -150,8 +150,8 @@ def label_single(ae_output,args):
                         eps *= 1.1
 
         if args.save:
-            utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy')
-            utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{aeid}.npy')
+            utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy',verbose=False)
+            utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{aeid}.npy',verbose=False)
     return {'aeid':aeid,'umapped_latents':umapped_latents,'labels':labels}
 
 def build_ensemble(vecs_and_labels,args,pivot,given_gt):
@@ -327,7 +327,7 @@ if __name__ == "__main__":
     parser.add_argument('--conc',action='store_true')
     parser.add_argument('--dec_lr',type=float,default=1e-3)
     parser.add_argument('--disable_cuda',action='store_true')
-    parser.add_argument('--dset',type=str,default='MNIST',choices=['MNIST','FashionMNIST','USPS','MNISTtest','CIFAR10','coil-100', 'letterAJ'])
+    parser.add_argument('--dset',type=str,default='MNISTfull',choices=['MNISTfull','FashionMNIST','USPS','MNISTtest','CIFAR10','coil-100', 'letterAJ'])
     parser.add_argument('--enc_lr',type=float,default=1e-3)
     parser.add_argument('--epochs',type=int,default=8)
     parser.add_argument('--exp_name',type=str,default='try')
@@ -380,11 +380,11 @@ if __name__ == "__main__":
         ARGS.epochs = 1
         ARGS.inter_epochs = 1
         ARGS.pretrain_epochs = 1
-        ARGS.meta_epochs = 2
+        ARGS.max_meta_epochs = 2
 
-    if ARGS.dset in ['MNIST','FashionMNIST']:
+    if ARGS.dset in ['MNISTfull','FashionMNIST']:
         ARGS.image_size = 28
-        ARGS.dset_size = 60000
+        ARGS.dset_size = 70000
         ARGS.num_channels = 1
         ARGS.num_clusters = 10
     elif ARGS.dset == 'USPS':
@@ -490,7 +490,7 @@ if __name__ == "__main__":
         labels = utils.dictify_list(labels,key='aeid')
         vecs_and_labels = {aeid:{**vecs[aeid],**labels[aeid]} for aeid in set(vecs.keys()).intersection(set(labels.keys()))}
         print(f"Building ensemble from {len(aes)} aes...")
-        centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt='none')
+        centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot='none',given_gt='none')
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
     elif 4 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
