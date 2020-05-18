@@ -42,7 +42,8 @@ import torchvision.datasets as tdatasets
 import umap.umap_ as umap
 
 
-def rtrain_ae(ae_dict,args,dl,should_change):
+def rtrain_ae(ae_dict,args,dset,should_change):
+    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
     aeid,ae = ae_dict['aeid'],ae_dict['ae']
     print(f'Rtraining {aeid}')
     befores = [p.detach().cpu().clone() for p in ae.parameters()]
@@ -65,15 +66,14 @@ def rtrain_ae(ae_dict,args,dl,should_change):
         for b,a in zip(befores,afters):
             assert not (b==a).all()
     if args.save:
-        utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints',f'pt{aeid}.pt')
+        utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints',f'pretrained{aeid}.pt')
     if args.vis_pretrain:
         utils.check_ae_images(ae.enc, ae.dec, dset)
-
-def generate_vecs_single(ae_dict,args,determin_dl):
-    aeid, ae = ae_dict['aeid'],ae_dict['ae']
+    # Now generate latent vecs for dataset
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
     else:
+        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
         for i, (xb,yb,idx) in enumerate(determin_dl):
             latent = ae.enc(xb)
             latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
@@ -85,11 +85,9 @@ def generate_vecs_single(ae_dict,args,determin_dl):
 def label_single(ae_output,args):
     aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
-        print(args.dset_size)
         as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
         remainder = np.zeros(args.dset_size%args.num_clusters)
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
-        print(labels.shape)
         umapped_latents = None
     else:
         umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,n_components=2,random_state=42).fit_transform(latents.squeeze())
@@ -190,7 +188,8 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         utils.np_save(all_agree,f'../{args.dset}', 'all_agree.npy')
     return centroids_by_id, ensemble_labels_, all_agree
 
-def train_ae(ae_dict,args,worst3,targets,all_agree,dl,sharing_ablation):
+def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
+    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
     aeid, ae = ae_dict['aeid'],ae_dict['ae']
     befores = [p.detach().cpu() for p in ae.parameters()]
     loss_func=nn.L1Loss(reduction='none')
@@ -267,11 +266,25 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dl,sharing_ablation):
         for b,a in zip(befores,afters): assert not (b==a).all()
     if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
     if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,dset,stacked=True)
+    if args.test:
+        latents = np.random.random((args.dset_size,50)).astype(np.float32)
+    else:
+        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
+        for i, (xb,yb,idx) in enumerate(determin_dl):
+            latent = ae.enc(xb)
+            latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
+            latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
+        if args.save:
+            utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',)
+    return {'aeid':aeid,'latents':latents}
 
 
 def load_ae(aeid,args):
-    checkpoints_dir = "checkpoints_solid" if args.solid else "checkpoints"
-    chkpt = torch.load(f'../{args.dset}/{checkpoints_dir}/pt{aeid}.pt', map_location=args.device)
+    if args.reload_chkpt == 'none':
+        path = f'../{args.dset}/checkpoints/pretrained{aeid}.pt'
+    else:
+        path = f'../{args.reload_chkpt}/checkpoints/pt{aeid}.pt'
+    chkpt = torch.load(path, map_location=args.device)
     revived_ae = utils.AE(chkpt['enc'],chkpt['dec'],aeid)
     return {'aeid': aeid, 'ae':revived_ae}
 
@@ -326,7 +339,7 @@ if __name__ == "__main__":
     parser.add_argument('--rlmbda',type=float,default=1.)
     parser.add_argument('--save','-s',action='store_true')
     parser.add_argument('--scatter_clusters',action='store_true')
-    parser.add_argument('--sections',type=int,nargs='+', default=[5])
+    parser.add_argument('--sections',type=int,nargs='+', default=[4])
     parser.add_argument('--seed',type=int,default=0)
     parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--single',action='store_true')
@@ -334,24 +347,14 @@ if __name__ == "__main__":
     parser.add_argument('--sharing_ablation',action='store_true')
     parser.add_argument('--show_gpu_memory',action='store_true')
     parser.add_argument('--solid',action='store_true')
+    parser.add_argument('--split',type=int,default=-1)
+    parser.add_argument('--reload_chkpt',type=str,default='none')
     parser.add_argument('--test','-t',action='store_true')
     parser.add_argument('--vis_pretrain',action='store_true')
     parser.add_argument('--vis_train',action='store_true')
     parser.add_argument('--worst3',action='store_true')
     ARGS = parser.parse_args()
-    print(ARGS)
 
-    if ARGS.short_epochs:
-        ARGS.pretrain_epochs = 1
-        ARGS.epochs = 1
-        ARGS.inter_epochs = 1
-        ARGS.pretrain_epochs = 1
-        ARGS.max_meta_epochs = 2
-
-    if ARGS.test and ARGS.save:
-        print("shouldn't be saving for a test run")
-        sys.exit()
-    if ARGS.test and ARGS.max_meta_epochs == 30: ARGS.max_meta_epochs = 2
     global LOAD_START_TIME; LOAD_START_TIME = time()
     torch.manual_seed(ARGS.seed)
     np.random.seed(ARGS.seed)
@@ -359,7 +362,6 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    import torch.multiprocessing as mp
     if ARGS.aeids is not None:
         aeids = ARGS.aeids
     elif ARGS.num_aes is not None:
@@ -369,7 +371,6 @@ if __name__ == "__main__":
         aeids = range(ARGS.ae_range[0],ARGS.ae_range[1])
     else:
         aeids = [0,1]
-    ctx = mp.get_context("spawn")
 
     if ARGS.short_epochs:
         ARGS.pretrain_epochs = 1
@@ -409,55 +410,57 @@ if __name__ == "__main__":
         ARGS.num_channels = 1
         ARGS.num_clusters = 10
 
+    if ARGS.test and ARGS.save:
+        print("shouldn't be saving for a test run")
+        sys.exit()
+    if ARGS.test and ARGS.max_meta_epochs == 30: ARGS.max_meta_epochs = 2
     if not ARGS.disable_cuda and torch.cuda.is_available():
         ARGS.device = torch.device(f'cuda:{ARGS.gpu}')
     else:
         ARGS.device = torch.device('cpu')
+    if ARGS.split == -1:
+        ARGS.split = len(aeids)
+    print(ARGS)
+
     new_ae = functools.partial(utils.make_ae,device=ARGS.device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
     dset = utils.get_vision_dset(ARGS.dset,ARGS.device)
     dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
     determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),ARGS.gen_batch_size,drop_last=False),pin_memory=False)
-    filled_pretrain = functools.partial(rtrain_ae,args=ARGS,should_change=True,dl=dl)
-    filled_generate = functools.partial(generate_vecs_single,args=ARGS,determin_dl=determin_dl)
+    filled_pretrain = functools.partial(rtrain_ae,args=ARGS,should_change=True,dset=dset)
     filled_label = functools.partial(label_single,args=ARGS)
     filled_load_ae = functools.partial(load_ae,args=ARGS)
     filled_load_vecs = functools.partial(load_vecs,args=ARGS)
     filled_load_labels = functools.partial(load_labels,args=ARGS)
     filled_load_ensemble = functools.partial(load_ensemble,args=ARGS)
+
+    import torch.multiprocessing as mp
+    ctx = mp.get_context("spawn")
+    def apply_maybe_multiproc(func,input_list,split):
+        if ARGS.single:
+            output_list = [func(item) for item in input_list]
+        else:
+            list_of_lists = []
+            for i in range(math.ceil(len(input_list)/split)):
+                with ctx.Pool(processes=split) as pool:
+                    new_list = pool.map(func, input_list[ARGS.split*i:split*(i+1)])
+                print(f'finished {i}th split section')
+                list_of_lists.append(new_list)
+            output_list = [item for sublist in list_of_lists for item in sublist]
+        return output_list
     if 1 in ARGS.sections: #Rtrain aes rather than load
         pretrain_start_time = time()
         aes = []
         print(f"Instantiating {len(aeids)} aes...")
         for aeid in aeids:
             aes.append({'aeid':aeid, 'ae':new_ae(aeid)})
-        with ctx.Pool(processes=len(aes)) as pool:
-            print(f"Pretraining {len(aes)} aes...")
-            r=[filled_pretrain(ae) for ae in aes] if ARGS.single else pool.map(filled_pretrain, aes)
+        print(f"Pretraining {len(aes)} aes...")
+        vecs = apply_maybe_multiproc(filled_pretrain,aes,split=ARGS.split)
         print(f'Pretraining time: {utils.asMinutes(time()-pretrain_start_time)}')
     else:
-        with ctx.Pool(processes=len(aeids)) as pool:
-            print(f"Loading {len(aeids)} aes...")
-            aes = [filled_load_ae(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_ae, aeids)
-        try: assert all([a['ae'].enc.block2[-2][0].out_channels==ARGS.NZ for a in aes])
-        except:
-            print(f'Mismatch between latent size of loaded aes, and NZ argument')
-            print([a['ae'].enc.block2[-2][0].out_channels for a in aes],'\n')
-            sys.exit()
+        print(f"Loading {len(aeids)} aes...")
+        aes = apply_maybe_multiproc(filled_load_ae,aeids,split=ARGS.split)
+        vecs = apply_maybe_multiproc(filled_load_vecs,aeids,split=ARGS.split)
 
-    if 2 in ARGS.sections:
-        generate_start_time = time()
-        with ctx.Pool(processes=len(aes)) as pool:
-            print(f"Generating vecs for {len(aes)} aes...")
-            vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
-        if ARGS.conc:
-            concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
-            vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
-        print(f'Generation time: {utils.asMinutes(time()-generate_start_time)}')
-    elif 3 in ARGS.sections or 4 in ARGS.sections:
-        with ctx.Pool(processes=len(aes)) as pool:
-            print(f"Loading vecs for {len(aes)} aes...")
-            vecs = [filled_load_vecs(ae) for ae in aeids] if ARGS.single else pool.map(filled_load_vecs, aeids)
-        assert all([v['latents'].shape[1] == ARGS.NZ for v in vecs])
 
     from sklearn.metrics import normalized_mutual_info_score as mi_func
     def rmi_func(pred,gt): return round(mi_func(pred,gt),4)
@@ -469,18 +472,16 @@ if __name__ == "__main__":
         d = utils.get_vision_dset(ARGS.dset,device=ARGS.device)
         gt_labels = d.y.cpu().detach().numpy()
         utils.np_save(gt_labels,labels_dir,'gt_labels.npy')
-    if 3 in ARGS.sections:
+    if 2 in ARGS.sections:
         label_start_time = time()
-        with ctx.Pool(processes=len(aes)) as pool:
-            print(f"Labelling {len(aes)} aes...")
-            labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+        print(f"Labelling {len(aes)} aes...")
+        labels = apply_maybe_multiproc(filled_label,vecs,split=ARGS.split)
         print(f'Labelling time: {utils.asMinutes(time()-label_start_time)}')
-    elif 4 in ARGS.sections:
-        with ctx.Pool(processes=len(aes)) as pool:
-            print(f"Loading labels for {len(aes)} aes...")
-            labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels, aeids)
+    elif 3 in ARGS.sections:
+        print(f"Loading labels for {len(aes)} aes...")
+        labels = apply_maybe_multiproc(filled_load_labels,aeids,split=ARGS.split)
 
-    if 4 in ARGS.sections:
+    if 3 in ARGS.sections:
         ensemble_build_start_time = time()
         vecs = utils.dictify_list(vecs,key='aeid')
         labels = utils.dictify_list(labels,key='aeid')
@@ -488,11 +489,11 @@ if __name__ == "__main__":
         print(f"Building ensemble from {len(aes)} aes...")
         centroids_by_id, ensemble_labels, all_agree = build_ensemble(vecs_and_labels,ARGS,pivot=gt_labels,given_gt='none')
         print(f'Ensemble building time: {utils.asMinutes(time()-ensemble_build_start_time)}')
-    elif 5 in ARGS.sections:
+    elif 4 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
         centroids_by_id, ensemble_labels, all_agree = filled_load_ensemble(aeids)
 
-    if 5 in ARGS.sections:
+    if 4 in ARGS.sections:
         train_start_time = time()
         best_acc = 0.
         best_mi = 0.
@@ -529,28 +530,19 @@ if __name__ == "__main__":
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=ARGS.device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=ARGS.device)
             if ARGS.sharing_ablation:
-                with ctx.Pool(processes=len(aes)) as pool:
-                    print(f"Loading vecs for {list(aeids)}...")
-                    labels = [filled_load_labels(aeid) for aeid in aeids] if ARGS.single else pool.map(filled_load_labels, aeids)
-                labels = utils.dictify_list(labels,key='aeid')
-                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dl=dl,sharing_ablation=True)
+                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dset=dset,sharing_ablation=True)
             else:
-                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dl=dl,sharing_ablation=False)
-            with ctx.Pool(processes=len(aes)) as pool:
-                print(f"Training aes {list(aeids)}...")
-                [filled_train(ae) for ae in copied_aes] if ARGS.single else pool.map(filled_train, copied_aes)
+                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dset=dset,sharing_ablation=False)
+            print(f"Training aes {list(aeids)}...")
+            vecs = apply_maybe_multiproc(filled_train,copied_aes,split=ARGS.split)
             aes = copied_aes
             assert set([ae['aeid'] for ae in aes]) == set(aeids)
-            with ctx.Pool(processes=len(aes)) as pool:
-                print(f"Generating vecs for {len(aes)} aes...")
-                vecs = [filled_generate(ae) for ae in aes] if ARGS.single else pool.map(filled_generate, [copy.deepcopy(ae) for ae in aes])
             if ARGS.conc:
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
                 vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
-            with ctx.Pool(processes=len(aes)) as pool:
-                print(f"Generating labels for {len(aes)} aes...")
-                print(f"Labelling vecs for {len(aes)} aes...")
-                labels = [filled_label(v) for v in vecs] if ARGS.single else pool.map(filled_label, vecs)
+            print(f"Generating labels for {len(aes)} aes...")
+            print(f"Labelling vecs for {len(aes)} aes...")
+            labels = apply_maybe_multiproc(filled_label,vecs,split=len(aeids))
             if ARGS.scatter_clusters:
                 selected = random.choice(labels)['umapped_latents']
                 utils.scatter_clusters(selected, gt_labels,show=True)
