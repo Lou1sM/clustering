@@ -276,10 +276,7 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
             latent = ae.enc(xb)
             latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
             latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
-        if args.save:
-            utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',verbose=False)
     return {'aeid':aeid,'latents':latents}
-
 
 def load_ae(aeid,args):
     if args.reload_chkpt == 'none':
@@ -321,7 +318,7 @@ if __name__ == "__main__":
     group.add_argument('--num_aes',type=int)
     parser.add_argument('--NZ',type=int,default=50)
     parser.add_argument('--batch_size',type=int,default=64)
-    parser.add_argument('--clamp_gauss_loss',type=float,default=0.1)
+    parser.add_argument('--clamp_gauss_loss',type=float,default=0.0)
     parser.add_argument('--clmbda',type=float,default=1.)
     parser.add_argument('--clusterer',type=str,default='HDBSCAN',choices=['HDBSCAN','GMM'])
     parser.add_argument('--conc',action='store_true')
