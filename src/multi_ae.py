@@ -79,7 +79,7 @@ def rtrain_ae(ae_dict,args,dset,should_change):
             latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
             latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
         if args.save:
-            utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',)
+            utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',verbose=True)
     return {'aeid':aeid,'latents':latents}
 
 def label_single(ae_output,args):
@@ -264,7 +264,9 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
     afters = [p.detach().cpu() for p in list(ae.enc.parameters()) + list(ae.dec.parameters())]
     if args.worst3:
         for b,a in zip(befores,afters): assert not (b==a).all()
-    if args.save: torch.save({'enc':ae.enc,'dec':ae.dec},f'../{args.dset}/checkpoints/{aeid}.pt')
+    if args.save:
+        save_path = f'../{args.dset}/checkpoints/pt{aeid}.pt'
+        torch.save({'enc':ae.enc,'dec':ae.dec},save_path)
     if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,dset,stacked=True)
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
@@ -284,6 +286,7 @@ def load_ae(aeid,args):
         path = f'../{args.dset}/checkpoints/pretrained{aeid}.pt'
     else:
         path = f'../{args.reload_chkpt}/checkpoints/pt{aeid}.pt'
+    print('Loading from',path)
     chkpt = torch.load(path, map_location=args.device)
     revived_ae = utils.AE(chkpt['enc'],chkpt['dec'],aeid)
     return {'aeid': aeid, 'ae':revived_ae}
@@ -599,4 +602,9 @@ if __name__ == "__main__":
             arrays_to_save = {k:v for k,v in by_aeid[aeid].items() if k!='aeid'}
             utils.np_savez(arrays_to_save,exp_dir,f'ae{aeid}_items.npz')
         exp_outputs = {'ensemble_labels': ensemble_labels,'all_agree':all_agree,'by_aeid':by_aeid}
+        summary_txt_file_path = os.path.join(exp_dir,'summary.txt')
+        with open(summary_txt_file_path, 'w') as f:
+            f.write(str(ARGS))
+            f.write(f"\nBest Acc: {best_acc}")
+            f.write(f"\nBest NMI: {best_mi}")
         print(f'Train time: {utils.asMinutes(time()-train_start_time)}')
