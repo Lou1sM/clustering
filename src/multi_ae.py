@@ -181,11 +181,11 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         except: set_trace()
         new_centroid_info['latent_centroids'] = latent_centroids
         centroids_by_id[aeid] = new_centroid_info
-        if args.save: utils.np_save(latent_centroids,f'../{args.dset}/centroids', f'centroids{aeid}.npy')
+        if args.save: utils.np_save(latent_centroids,f'../{args.dset}/centroids', f'centroids{aeid}.npy',verbose=False)
 
     if args.save:
-        utils.np_save(ensemble_labels,f'../{args.dset}', 'ensemble_labels.npy')
-        utils.np_save(all_agree,f'../{args.dset}', 'all_agree.npy')
+        utils.np_save(ensemble_labels,f'../{args.dset}', 'ensemble_labels.npy',verbose=False)
+        utils.np_save(all_agree,f'../{args.dset}', 'all_agree.npy',verbose=False)
     return centroids_by_id, ensemble_labels_, all_agree
 
 def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
@@ -277,7 +277,7 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
             latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
             latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
         if args.save:
-            utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',)
+            utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',verbose=False)
     return {'aeid':aeid,'latents':latents}
 
 
@@ -474,7 +474,7 @@ if __name__ == "__main__":
         print('Loading gt labels directly from the dset')
         d = utils.get_vision_dset(ARGS.dset,device=ARGS.device)
         gt_labels = d.y.cpu().detach().numpy()
-        utils.np_save(gt_labels,labels_dir,'gt_labels.npy')
+        utils.np_save(gt_labels,labels_dir,'gt_labels.npy',verbose=False)
     if 2 in ARGS.sections:
         label_start_time = time()
         print(f"Labelling {len(aes)} aes...")
