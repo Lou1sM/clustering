@@ -265,8 +265,7 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
     if args.worst3:
         for b,a in zip(befores,afters): assert not (b==a).all()
     if args.save:
-        save_path = f'../{args.dset}/checkpoints/pt{aeid}.pt'
-        torch.save({'enc':ae.enc,'dec':ae.dec},save_path)
+        utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints/{args.exp_name}',f'{aeid}.pt')
     if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,dset,stacked=True)
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)

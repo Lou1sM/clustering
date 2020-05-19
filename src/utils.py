@@ -416,8 +416,16 @@ def get_vision_dset(dset_name,device,x_only=False):
         y = torch.cat([dtrain.targets,dtest.targets])
         data = x if x_only else (x,y)
     elif dset_name == 'USPS':
-        d=tdatasets.USPS(root=dirpath,train=True,download=True)
-        data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
+        dtrain=tdatasets.USPS(root=dirpath,train=True,download=True)
+        dtest=tdatasets.USPS(root=dirpath,train=False,download=True)
+        train_data = torch.tensor(dtrain.data,device=device)
+        test_data = torch.tensor(dtest.data,device=device)
+        train_targets = torch.tensor(dtrain.targets,device=device)
+        test_targets = torch.tensor(dtest.targets,device=device)
+        x = torch.cat([train_data,test_data])
+        y = torch.cat([train_targets,test_targets])
+        data = x if x_only else (x,y)
+        #data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
     elif dset_name == 'CIFAR10':
         d=tdatasets.CIFAR10(root=dirpath,train=True,download=True)
         data = torch.tensor(d.data,device=device) if x_only else (torch.tensor(d.data,device=device), torch.tensor(d.targets,device=device))
