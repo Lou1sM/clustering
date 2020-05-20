@@ -385,7 +385,7 @@ if __name__ == "__main__":
         ARGS.num_clusters = 10
     elif ARGS.dset == 'USPS':
         ARGS.image_size = 16
-        ARGS.dset_size = 7291
+        ARGS.dset_size = 9298
         ARGS.num_channels = 1
         ARGS.num_clusters = 10
     elif ARGS.dset == 'MNISTtest':
