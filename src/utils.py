@@ -97,53 +97,54 @@ class GeneratorStacked(nn.Module):
         self.block1 = nn.Sequential(
             nn.ConvTranspose2d( nz, 256, 4, 1, 1, bias=False).to(device),
             nn.BatchNorm2d(ngf * 8).to(device),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.3),
             self.dropout)
         self.block2 = nn.Sequential(
             nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False).to(device),
             nn.BatchNorm2d(ngf * 4).to(device),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.3),
             self.dropout)
         self.block3 = nn.Sequential(
             nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False).to(device),
             nn.BatchNorm2d(ngf * 2).to(device),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.3),
             self.dropout)
         if output_size == 16:
             self.block4 = nn.Sequential(
-                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False).to(device),
-                nn.BatchNorm2d(32).to(device),
-                nn.ReLU(True),
-                self.dropout)
+                nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=True).to(device),
+                #nn.BatchNorm2d(32).to(device),
+                #nn.LeakyReLU(0.3),
+                #self.dropout)
+                nn.Tanh())
         elif output_size == 28:
             self.block4 = nn.Sequential(
                 nn.ConvTranspose2d(64, 32, 4, 2, 2, bias=False).to(device),
                 nn.BatchNorm2d(32).to(device),
-                nn.ReLU(True),
+                nn.LeakyReLU(0.3),
                 self.dropout)
             self.block5 = nn.Sequential(
-                nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False).to(device),
+                nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=True).to(device),
                 nn.Tanh()
             )
         elif output_size in [32,128]:
             self.block4 = nn.Sequential(
                 nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False).to(device),
                 nn.BatchNorm2d(32).to(device),
-                nn.ReLU(True),
+                nn.LeakyReLU(0.3),
                 self.dropout)
             if output_size == 32:
                 self.block5 = nn.Sequential(
-                    nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=False).to(device),
+                    nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=True).to(device),
                     nn.Tanh()
                 )
             elif output_size == 128:
                 self.block5 = nn.Sequential(
                     nn.ConvTranspose2d(32, 32, 4, 4, 0, bias=False).to(device),
                     nn.BatchNorm2d(32).to(device),
-                    nn.ReLU(True),
+                    nn.LeakyReLU(0.3),
                     self.dropout)
                 self.block6 = nn.Sequential(
-                    nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=False).to(device),
+                    nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=True).to(device),
                     nn.Tanh()
                 )
 
