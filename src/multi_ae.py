@@ -343,7 +343,7 @@ if __name__ == "__main__":
     parser.add_argument('--short_epochs',action='store_true')
     parser.add_argument('--single',action='store_true')
     parser.add_argument('--one_image',action='store_true')
-    parser.add_argument('--sharing_ablation',action='store_true')
+    parser.add_argument('--ablation',type=str,choices=['none','sharing','filtering'],default='none')
     parser.add_argument('--show_gpu_memory',action='store_true')
     parser.add_argument('--solid',action='store_true')
     parser.add_argument('--split',type=int,default=-1)
@@ -528,10 +528,12 @@ if __name__ == "__main__":
                     except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=ARGS.device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=ARGS.device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=ARGS.device)
-            if ARGS.sharing_ablation:
-                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dset=dset,sharing_ablation=True)
-            else:
+            if ARGS.ablation == 'none':
                 filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=ensemble_labels,all_agree=all_agree,dset=dset,sharing_ablation=False)
+            elif ARGS.ablation == 'sharing':
+                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dset=dset,sharing_ablation=True)
+            elif ARGS.ablation == 'filtering':
+                filled_train = functools.partial(train_ae,args=ARGS,worst3=worst3,targets=ensemble_labels,all_agree=np.ones(ARGS.dset_size).astype(np.bool),dset=dset,sharing_ablation=False)
             print(f"Training aes {list(aeids)}...")
             vecs = apply_maybe_multiproc(filled_train,copied_aes,split=ARGS.split)
             aes = copied_aes
