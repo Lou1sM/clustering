@@ -5,6 +5,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.special import comb, factorial
 from sklearn.metrics import adjusted_rand_score
 from torch.utils import data
+import kornia
 import math
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -196,8 +197,7 @@ class TransformDataset_old(data.Dataset):
 class TransformDataset(data.Dataset):
     def __init__(self,data,transforms,x_only,device,augment):
         self.x_only,self.device,self.augment=x_only,device,augment
-        self.augmentor = ttransforms.RandomAffine(degrees=10,translate=(0.1,0.1))
-        #set_trace()
+        self.aug = kornia.augmentation.RandomAffine(degrees=(-10,10),translate=(0.1,0.1),return_transform=True)
         if x_only:
             self.x = data
             for transform in transforms:
@@ -213,10 +213,9 @@ class TransformDataset(data.Dataset):
     def __getitem__(self,idx):
         batch_x = self.x[idx]
         if self.augment:
-            batch_x = batch_x.cpu()
-            batch_x = TF.to_pil_image(batch_x)
-            batch_x = self.augmentor(batch_x)
-            batch_x = TF.to_tensor(batch_x).to(self.device)
+            batch_x = self.aug(batch_x)[0]
+            if isinstance(idx,int):
+                batch_x = batch_x.squeeze(1)
         if self.x_only: return batch_x, idx
         else: return batch_x, self.y[idx], idx
 
@@ -234,6 +233,24 @@ class KwargTransformDataset(data.Dataset):
         return [self.transform(getattr(self,data_name)[idx]) for data_name in self.data_names] + [idx]
         if self.x_only: return self.transform(self.data[idx]), idx
         else: return self.transform(self.x[idx]), self.y[idx], idx
+
+def augment_batch(batch_tensor):
+    orig_size = batch_tensor.ndim
+    batch_size = batch_tensor.shape[0]
+    if orig_size == 3:
+        batch_tensor=batch_tensor.unsqueeze(0)
+    angle = (torch.rand(batch_size)*20)-10
+    center = torch.ones(batch_size,2)
+    center[..., 0] = batch_tensor.shape[3] / 2
+    center[..., 1] = batch_tensor.shape[2] / 2
+    scale = torch.ones(batch_size)
+    M = kornia.get_rotation_matrix2d(center, angle, scale)
+    _, _, h, w = batch_tensor.shape
+    batch_tensor_warped = kornia.warp_affine(batch_tensor, M, dsize=(h, w))
+    if orig_size == 3:
+        batch_tensor_warped=batch_tensor_warped.squeeze(0)
+    return batch_tensor_warped
+
 
 def save_and_check(enc,dec,fname):
     torch.save({'enc': enc, 'dec': dec},fname)

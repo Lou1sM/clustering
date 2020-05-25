@@ -43,6 +43,7 @@ import umap.umap_ as umap
 
 
 def rtrain_ae(ae_dict,args,dset,should_change):
+    dset.augment = args.augment
     dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
     aeid,ae = ae_dict['aeid'],ae_dict['ae']
     print(f'Rtraining {aeid}')
@@ -91,12 +92,13 @@ def label_single(ae_output,args):
         labels = np.concatenate([as_tens,remainder]).astype(np.int)
         umapped_latents = None
     else:
-        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=30,n_components=2,random_state=42).fit_transform(latents.squeeze())
+        umap_neighbours = 30*args.dset_size//(70000)
+        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=umap_neighbours,n_components=2,random_state=42).fit_transform(latents.squeeze())
         if args.clusterer == 'GMM':
             c = GaussianMixture(n_components=10)
             labels = c.fit_predict(umapped_latents)
         elif args.clusterer == 'HDBSCAN':
-            min_c = 500
+            min_c = args.dset_size//args.num_clusters
             scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
             n = -1
             if utils.get_num_labels(scanner.labels_) == args.num_clusters:
@@ -128,7 +130,7 @@ def label_single(ae_output,args):
                         print(f'ae {aeid} using {eps}')
                         break
                     elif set(labels) == set([-1]):
-                        for _ in range(400):
+                        for _ in range(600):
                             labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
                             n = utils.get_num_labels(labels)
                             if n == args.num_clusters:
@@ -138,7 +140,10 @@ def label_single(ae_output,args):
                                 print(f"overshot inner to {n} with {min_c}, {eps}")
                                 eps += 0.01
                             else:
-                                min_c -= 1
+                                if eps > 0:
+                                    eps -= 0.1
+                                else:
+                                    min_c -= 1
                                 if min_c == 1: break
                         break
 
@@ -149,6 +154,8 @@ def label_single(ae_output,args):
                     else:
                         print(f'ae {aeid} overshot to {n} with {eps} at {i}')
                         eps *= 1.1
+        if n != args.num_clusters:
+            print(f'WARNING: {aeid} has only {n} clusters, {min_c}, {eps}')
 
         if args.save:
             utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy',verbose=False)
@@ -251,7 +258,7 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
             if args.test: break
         if args.test: break
     print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
-    dset.augment = True
+    dset.augment = args.augment
     for epoch in range(args.inter_epochs):
         epoch_loss = 0
         for i, (xb,yb,idx) in enumerate(dl):
@@ -318,6 +325,7 @@ if __name__ == "__main__":
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--ae_range',type=int,nargs='+')
     group.add_argument('--aeids',type=int,nargs='+')
+    parser.add_argument('--augment',action='store_true')
     group.add_argument('--num_aes',type=int)
     parser.add_argument('--NZ',type=int,default=50)
     parser.add_argument('--batch_size',type=int,default=64)
