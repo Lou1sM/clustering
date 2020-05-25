@@ -165,10 +165,9 @@ def label_single(ae_output,args):
 def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     nums_labels = [utils.get_num_labels(ae_results['labels']) for ae_results in vecs_and_labels.values()]
     counts = {x:nums_labels.count(x) for x in set(nums_labels)}
-    ensemble_num_labels = sorted([x for x,c in counts.items() if c==max(counts.values())])[-1]
-    assert given_gt is 'none' or ensemble_num_labels == utils.get_num_labels(given_gt)
-    usable_labels = {aeid:result['labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['labels']) == ensemble_num_labels}
-    if pivot is not 'none' and ensemble_num_labels == utils.num_labs(pivot):
+    print([(k,utils.get_num_labels(v['labels'])) for k,v in vecs_and_labels.items()])
+    usable_labels = {aeid:result['labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['labels']) == args.num_clusters}
+    if pivot is not 'none' and args.num_clusters == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot='none')
@@ -466,6 +465,9 @@ if __name__ == "__main__":
             aes.append({'aeid':aeid, 'ae':new_ae(aeid)})
         print(f"Pretraining {len(aes)} aes...")
         vecs = apply_maybe_multiproc(filled_pretrain,aes,split=ARGS.split)
+        if ARGS.conc:
+            concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
+            vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
         print(f'Pretraining time: {utils.asMinutes(time()-pretrain_start_time)}')
     else:
         print(f"Loading {len(aeids)} aes...")
@@ -486,11 +488,11 @@ if __name__ == "__main__":
     if 2 in ARGS.sections:
         label_start_time = time()
         print(f"Labelling {len(aes)} aes...")
-        labels = apply_maybe_multiproc(filled_label,vecs,split=ARGS.split)
+        labels = apply_maybe_multiproc(filled_label,vecs,split=len(aeids))
         print(f'Labelling time: {utils.asMinutes(time()-label_start_time)}')
     elif 3 in ARGS.sections:
         print(f"Loading labels for {len(aes)} aes...")
-        labels = apply_maybe_multiproc(filled_load_labels,aeids,split=ARGS.split)
+        labels = apply_maybe_multiproc(filled_load_labels,aeids,split=len(aeids))
 
     if 3 in ARGS.sections:
         ensemble_build_start_time = time()
