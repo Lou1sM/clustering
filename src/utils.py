@@ -15,6 +15,8 @@ import sys
 import torch
 import torch.nn as nn
 import torchvision.datasets as tdatasets
+import torchvision.transforms as ttransforms
+import torchvision.transforms.functional as TF
 import umap.umap_ as umap
 
 
@@ -178,7 +180,7 @@ class EncoderStacked(nn.Module):
 class Dataholder():
     def __init__(self,train_data,train_labels): self.train_data,self.train_labels=train_data,train_labels
 
-class TransformDataset(data.Dataset):
+class TransformDataset_old(data.Dataset):
     def __init__(self,data,transforms,x_only,device):
         self.transform,self.x_only,self.device=compose(transforms),x_only,device
         if x_only:
@@ -192,8 +194,10 @@ class TransformDataset(data.Dataset):
         else: return self.transform(self.x[idx]), self.y[idx], idx
 
 class TransformDataset(data.Dataset):
-    def __init__(self,data,transforms,x_only,device):
-        self.x_only,self.device=x_only,device
+    def __init__(self,data,transforms,x_only,device,augment):
+        self.x_only,self.device,self.augment=x_only,device,augment
+        self.augmentor = ttransforms.RandomAffine(degrees=10,translate=(0.1,0.1))
+        #set_trace()
         if x_only:
             self.x = data
             for transform in transforms:
@@ -207,9 +211,14 @@ class TransformDataset(data.Dataset):
             self.x, self.y = self.x.to(self.device),self.y.to(self.device)
     def __len__(self): return len(self.data) if self.x_only else len(self.x)
     def __getitem__(self,idx):
-        #if self.x_only: return self.transform(self.x[idx]), idx
-        if self.x_only: return self.x[idx], idx
-        else: return self.x[idx], self.y[idx], idx
+        batch_x = self.x[idx]
+        if self.augment:
+            batch_x = batch_x.cpu()
+            batch_x = TF.to_pil_image(batch_x)
+            batch_x = self.augmentor(batch_x)
+            batch_x = TF.to_tensor(batch_x).to(self.device)
+        if self.x_only: return batch_x, idx
+        else: return batch_x, self.y[idx], idx
 
 class KwargTransformDataset(data.Dataset):
     def __init__(self,transforms,device,**kwdata):
@@ -435,8 +444,7 @@ def get_vision_dset(dset_name,device,x_only=False):
     elif dset_name == 'letterAJ':
         data = load_letterAJ(x_only)
         return TransformDataset(data,[add_colour_dimension],x_only,device=device)
-    else: set_trace()
-    return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
+    return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device,augment=True)
 
 def get_dloader(raw_data,x_only,batch_size,device,random=True):
     ds = get_dset(raw_data,x_only,device=device)

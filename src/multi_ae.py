@@ -73,6 +73,7 @@ def rtrain_ae(ae_dict,args,dset,should_change):
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
     else:
+        dset.augment = False
         determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
         for i, (xb,yb,idx) in enumerate(determin_dl):
             latent = ae.enc(xb)
@@ -127,7 +128,7 @@ def label_single(ae_output,args):
                         print(f'ae {aeid} using {eps}')
                         break
                     elif set(labels) == set([-1]):
-                        for _ in range(50000):
+                        for _ in range(400):
                             labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
                             n = utils.get_num_labels(labels)
                             if n == args.num_clusters:
@@ -206,6 +207,7 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
     else:
         targets = torch.tensor(targets,device=args.device)
         full_mask = torch.tensor(all_agree,device=args.device)
+    dset.augment = False
     for epoch in range(args.epochs):
         total_rloss = 0.
         total_loss = 0.
@@ -249,6 +251,7 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
             if args.test: break
         if args.test: break
     print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
+    dset.augment = True
     for epoch in range(args.inter_epochs):
         epoch_loss = 0
         for i, (xb,yb,idx) in enumerate(dl):
@@ -270,6 +273,7 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
     else:
+        dset.augment = False
         determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
         for i, (xb,yb,idx) in enumerate(determin_dl):
             latent = ae.enc(xb)
