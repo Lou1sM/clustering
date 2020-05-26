@@ -143,8 +143,8 @@ def label_single(ae_output,args):
                                 if eps > 0:
                                     eps -= 0.1
                                 else:
-                                    min_c -= 1
-                                if min_c <= args.dset_size/(3*args.num_clusters): break
+                                    min_c -= 50
+                                if min_c <= 300: break
                         break
 
                     elif n < args.num_clusters:
@@ -154,8 +154,8 @@ def label_single(ae_output,args):
                     else:
                         print(f'ae {aeid} overshot to {n} with {eps} at {i}')
                         eps *= 1.1
-        if n != args.num_clusters:
-            print(f'WARNING: {aeid} has only {n} clusters, {min_c}, {eps}')
+            if n != args.num_clusters:
+                print(f'WARNING: {aeid} has only {n} clusters, {min_c}, {eps}')
 
         if args.save:
             utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy',verbose=False)
@@ -488,7 +488,7 @@ if __name__ == "__main__":
     if 2 in ARGS.sections:
         label_start_time = time()
         print(f"Labelling {len(aes)} aes...")
-        labels = apply_maybe_multiproc(filled_label,vecs,split=len(aeids))
+        labels = apply_maybe_multiproc(filled_label,vecs,split=len(vecs))
         print(f'Labelling time: {utils.asMinutes(time()-label_start_time)}')
     elif 3 in ARGS.sections:
         print(f"Loading labels for {len(aes)} aes...")
@@ -538,8 +538,13 @@ if __name__ == "__main__":
                 try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
                 except: set_trace()
                 for aedict in copied_aes:
+                    #if aedict['ae'].pred[-1].weight.shape[0] != utils.get_num_labels(labels[aedict['aeid']]):
+                        #aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=ARGS.device)
                     try: assert(aedict['ae'].pred.in_features == ARGS.NZ)
-                    except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=ARGS.device)
+                    #except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=ARGS.device)
+                    except:
+                        nout = utils.get_num_labels(labels[aedict['aeid']]['labels']) if ARGS.ablation == 'sharing' else ARGS.num_clusters
+                        aedict['ae'].pred = utils.mlp(ARGS.NZ,25,nout,device=ARGS.device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=ARGS.device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=ARGS.device)
             if ARGS.ablation == 'none':
@@ -557,7 +562,7 @@ if __name__ == "__main__":
                 vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
             print(f"Generating labels for {len(aes)} aes...")
             print(f"Labelling vecs for {len(aes)} aes...")
-            labels = apply_maybe_multiproc(filled_label,vecs,split=len(aeids))
+            labels = apply_maybe_multiproc(filled_label,vecs,split=len(vecs))
             if ARGS.scatter_clusters:
                 selected = random.choice(labels)['umapped_latents']
                 utils.scatter_clusters(selected, gt_labels,show=True)
