@@ -130,7 +130,7 @@ def label_single(ae_output,args):
                         print(f'ae {aeid} using {eps}')
                         break
                     elif set(labels) == set([-1]):
-                        for _ in range(600):
+                        while True:
                             labels = scanner.single_linkage_tree_.get_clusters(best_eps,min_cluster_size=min_c)
                             n = utils.get_num_labels(labels)
                             if n == args.num_clusters:
@@ -144,7 +144,7 @@ def label_single(ae_output,args):
                                     eps -= 0.1
                                 else:
                                     min_c -= 1
-                                if min_c == 1: break
+                                if min_c <= args.dset_size/(3*args.num_clusters): break
                         break
 
                     elif n < args.num_clusters:
@@ -291,7 +291,7 @@ def load_ae(aeid,args):
     if args.reload_chkpt == 'none':
         path = f'../{args.dset}/checkpoints/pretrained{aeid}.pt'
     else:
-        path = f'../{args.reload_chkpt}/checkpoints/pt{aeid}.pt'
+        path = f'../{args.dset}/checkpoints/{args.reload_chkpt}/{aeid}.pt'
     print('Loading from',path)
     chkpt = torch.load(path, map_location=args.device)
     revived_ae = utils.AE(chkpt['enc'],chkpt['dec'],aeid)
@@ -452,7 +452,7 @@ if __name__ == "__main__":
             list_of_lists = []
             for i in range(math.ceil(len(input_list)/split)):
                 with ctx.Pool(processes=split) as pool:
-                    new_list = pool.map(func, input_list[ARGS.split*i:split*(i+1)])
+                    new_list = pool.map(func, input_list[split*i:split*(i+1)])
                 print(f'finished {i}th split section')
                 list_of_lists.append(new_list)
             output_list = [item for sublist in list_of_lists for item in sublist]
