@@ -98,7 +98,7 @@ def label_single(ae_output,args):
             c = GaussianMixture(n_components=10)
             labels = c.fit_predict(umapped_latents)
         elif args.clusterer == 'HDBSCAN':
-            min_c = args.dset_size//args.num_clusters
+            min_c = args.dset_size//(args.num_clusters*2)
             scanner = hdbscan.HDBSCAN(min_samples=10, min_cluster_size=min_c).fit(umapped_latents)
             n = -1
             if utils.get_num_labels(scanner.labels_) == args.num_clusters:
@@ -137,13 +137,11 @@ def label_single(ae_output,args):
                                 print('having to use min_c', min_c)
                                 break
                             elif n > args.num_clusters:
-                                print(f"overshot inner to {n} with {min_c}, {eps}")
-                                eps += 0.01
+                                print(f"{aeid} overshot inner to {n} with {min_c}, {eps}")
+                                best_eps += 0.01
+                                if best_eps >= 100: break
                             else:
-                                if eps > 0:
-                                    eps -= 0.1
-                                else:
-                                    min_c -= 50
+                                min_c -= 25
                                 if min_c <= 300: break
                         break
 
@@ -154,7 +152,7 @@ def label_single(ae_output,args):
                     else:
                         print(f'ae {aeid} overshot to {n} with {eps} at {i}')
                         eps *= 1.1
-            if n != args.num_clusters:
+            if utils.get_num_labels(labels) != args.num_clusters:
                 print(f'WARNING: {aeid} has only {n} clusters, {min_c}, {eps}')
 
         if args.save:
@@ -505,6 +503,9 @@ if __name__ == "__main__":
     elif 4 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
         centroids_by_id, ensemble_labels, all_agree = filled_load_ensemble(aeids)
+        if ARGS.ablation == 'sharing':
+            labels = apply_maybe_multiproc(filled_load_labels,aeids,split=len(aeids))
+
 
     if 4 in ARGS.sections:
         train_start_time = time()
