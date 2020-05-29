@@ -84,7 +84,7 @@ def rtrain_ae(ae_dict,args,dset,should_change):
             utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',verbose=True)
     return {'aeid':aeid,'latents':latents}
 
-def label_single(ae_output,args):
+def label_single(ae_output,args,abl=False):
     aeid,latents = ae_output['aeid'],ae_output['latents']
     if args.test:
         as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
@@ -93,7 +93,10 @@ def label_single(ae_output,args):
         umapped_latents = None
     else:
         umap_neighbours = 30*args.dset_size//(70000)
-        umapped_latents = umap.UMAP(min_dist=0,n_neighbors=umap_neighbours,n_components=2,random_state=42).fit_transform(latents.squeeze())
+        if abl:
+            umapped_latents = latents
+        else:
+            umapped_latents = umap.UMAP(min_dist=0,n_neighbors=umap_neighbours,n_components=2,random_state=42).fit_transform(latents.squeeze())
         if args.clusterer == 'GMM':
             c = GaussianMixture(n_components=10)
             labels = c.fit_predict(umapped_latents)
@@ -165,6 +168,9 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     counts = {x:nums_labels.count(x) for x in set(nums_labels)}
     print([(k,utils.get_num_labels(v['labels'])) for k,v in vecs_and_labels.items()])
     usable_labels = {aeid:result['labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['labels']) == args.num_clusters}
+    if len(usable_labels) == 0:
+        most_common_num_labels = max(nums_labels, key=lambda x: counts[x])
+        usable_labels = {aeid:result['labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['labels']) == most_common_num_labels}
     if pivot is not 'none' and args.num_clusters == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
