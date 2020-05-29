@@ -212,8 +212,13 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
         opt.add_param_group({'params':ae.pred2.parameters(),'lr':1e-3})
         opt.add_param_group({'params':ae.pred3.parameters(),'lr':1e-3})
     if sharing_ablation:
-        targets = torch.tensor(targets[aeid]['labels'],device=args.device)
+        targets_arr = np.array(targets[aeid]['labels'])
+        ok_labels = targets_arr>=0
+        filler = np.random.randint(size=targets_arr.shape,high=targets_arr.max(),low=0)
+        targets_arr = np.where(targets_arr,ok_labels,filler)
+        targets = torch.tensor(targets_arr,device=args.device)
         full_mask = targets >= 0
+        assert full_mask.all()
     else:
         targets = torch.tensor(targets,device=args.device)
         full_mask = torch.tensor(all_agree,device=args.device)
