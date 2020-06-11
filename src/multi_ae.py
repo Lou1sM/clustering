@@ -514,8 +514,7 @@ if __name__ == "__main__":
     elif 4 in ARGS.sections:
         print(f"Loading ensemble from {len(aes)} aes...")
         centroids_by_id, ensemble_labels, all_agree = filled_load_ensemble(aeids)
-        if ARGS.ablation == 'sharing':
-            labels = apply_maybe_multiproc(filled_load_labels,aeids,split=len(aeids))
+        labels = apply_maybe_multiproc(filled_load_labels,aeids,split=len(aeids))
 
 
     if 4 in ARGS.sections:
@@ -550,12 +549,13 @@ if __name__ == "__main__":
                 try: assert set([ae['aeid'] for ae in copied_aes]) == set(aeids)
                 except: set_trace()
                 for aedict in copied_aes:
-                    #if aedict['ae'].pred[-1].weight.shape[0] != utils.get_num_labels(labels[aedict['aeid']]):
-                        #aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=ARGS.device)
-                    try: assert(aedict['ae'].pred.in_features == ARGS.NZ)
-                    #except:aedict['ae'].pred = utils.mlp(ARGS.NZ,25,ARGS.num_clusters,device=ARGS.device)
-                    except:
+                    if not hasattr(aedict['ae'],'pred'):
+                        print(f"making a first pred subnet for {aedict['aeid']}")
                         nout = utils.get_num_labels(labels[aedict['aeid']]['labels']) if ARGS.ablation == 'sharing' else ARGS.num_clusters
+                        aedict['ae'].pred = utils.mlp(ARGS.NZ,25,nout,device=ARGS.device)
+
+                    if aedict['ae'].pred[-1].weight.shape[0] != utils.get_num_labels(labels[aedict['aeid']]['labels']):
+                        print(f"pred is the wrong shape for {aedict['aeid']}, making a new one")
                         aedict['ae'].pred = utils.mlp(ARGS.NZ,25,nout,device=ARGS.device)
                     aedict['ae'].pred2 = utils.mlp(ARGS.NZ,25,2,device=ARGS.device)
                     aedict['ae'].pred3 = utils.mlp(ARGS.NZ,25,3,device=ARGS.device)
