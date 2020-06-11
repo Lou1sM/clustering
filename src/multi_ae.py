@@ -265,7 +265,9 @@ def train_ae(ae_dict,args,worst3,targets,all_agree,dset,sharing_ablation):
             loss.backward(); opt.step(); opt.zero_grad()
             if args.test: break
         if args.test: break
-    print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
+
+    if args.epochs != 0:
+        print(f'AE: {aeid}, Epoch: {epoch} RLoss: {round(total_rloss,3)}, GaussLoss: {round(total_gloss,3)}, W2: {round(total_w2loss,2)}, W3: {round(total_w3loss,3)}')
     dset.augment = args.augment
     for epoch in range(args.inter_epochs):
         epoch_loss = 0
@@ -592,8 +594,8 @@ if __name__ == "__main__":
             num_agree_histories.append(all_agree.sum())
             new_best_acc = acc
             print('AE Scores:')
-            print('L acc', [racc(label_dict['labels'][label_dict['labels']>=0],gt_labels[label_dict['labels']>=0]) for label_dict in labels.values()])
-            print('L MI', [rmi_func(labels[x]['labels'][labels[x]['labels']>=0],gt_labels[labels[x]['labels']>=0]) for x in aeids])
+            print('L acc', [racc(label_dict['labels'],gt_labels) for label_dict in labels.values()])
+            print('L MI', [rmi_func(labels[x]['labels'],gt_labels) for x in aeids])
             print('Ensemble Scores:')
             print('Acc:',acc)
             print('NMI:',mi)
