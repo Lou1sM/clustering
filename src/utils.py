@@ -1,14 +1,14 @@
 from datetime import datetime
-from fastai import datasets,layers
+from sklearn.metrics import normalized_mutual_info_score as mi_func
+from fastai import layers
 from pdb import set_trace
 from scipy.optimize import linear_sum_assignment
-from scipy.special import comb, factorial
 from sklearn.metrics import adjusted_rand_score
 from torch.utils import data
+import gc
 import kornia
 import math
 import matplotlib.cm as cm
-import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -16,8 +16,7 @@ import sys
 import torch
 import torch.nn as nn
 import torchvision.datasets as tdatasets
-import torchvision.transforms as ttransforms
-import torchvision.transforms.functional as TF
+import torch.multiprocessing as mp
 import umap.umap_ as umap
 
 
@@ -195,7 +194,7 @@ class TransformDataset_old(data.Dataset):
         else: return self.transform(self.x[idx]), self.y[idx], idx
 
 class TransformDataset(data.Dataset):
-    def __init__(self,data,transforms,x_only,device,augment):
+    def __init__(self,data,transforms,x_only,device,augment=False):
         self.x_only,self.device,self.augment=x_only,device,augment
         self.aug = kornia.augmentation.RandomAffine(degrees=(-10,10),translate=(0.1,0.1),return_transform=True)
         if x_only:
@@ -259,8 +258,6 @@ def save_and_check(enc,dec,fname):
     test_mods_eq(e,enc); test_mods_eq(d,dec)
 
 def show_xb(xb): plt.imshow(xb[0,0]); plt.show()
-def normalize_leaf(t): return torch.tensor(t.data)/t.data.norm()
-def normalize(t): return t/t.norm()
 def to_float_tensor(item): return item.float().div_(255.)
 def add_colour_dimension(item):
     if item.dim() == 4:
@@ -276,9 +273,6 @@ def add_colour_dimension(item):
         else: return item.unsqueeze(1) # batch, size, size
     else: return item.unsqueeze(0) # size, size
 
-def umap_embed(vectors,**config): return umap.UMAP(random_state=42).fit_transform(vectors,**config)
-def stats(x): return x.mean(),x.std()
-def safemean(t): return 0 if t.numel() == 0 else t.mean()
 def get_datetime_stamp(): return str(datetime.now()).split()[0][5:] + '_'+str(datetime.now().time()).split()[0][:-7]
 
 def get_user_yesno_answer(question):
@@ -339,34 +333,6 @@ def get_reslike_block(nfs,sz):
     return nn.Sequential(
         *[layers.conv_layer(nfs[i],nfs[i+1],stride=2 if i==0 else 1,leaky=0.3,padding=1)
          for i in range(len(nfs)-1)], nn.AdaptiveMaxPool2d(sz))
-
-class SuperAE(nn.Module):
-    def __init__(self,num_aes,latent_size,device):
-        super().__init__()
-        self.num_aes = num_aes
-        self.latent_size = latent_size
-        self.device = device
-        self.encs,self.decs = [],[]
-        for ae_num in range(num_aes):
-            enc,dec = get_enc_dec(self.device,self.latent_size)
-            setattr(self,f'enc{ae_num}',enc)
-            setattr(self,f'dec{ae_num}',dec)
-            self.encs.append(enc)
-            self.decs.append(dec)
-
-    def forward(self,x):
-        latents = torch.stack([enc(x) for enc in self.encs])
-        return torch.stack([dec(latents[i]) for i,dec in enumerate(self.decs)])
-
-    def encode(self,x):
-        return [enc(x) for enc in self.encs]
-
-    def decode_list(self,latent_list):
-        #return torch.stack([dec(latent_list[i]) for i,dec in enumerate(self.decs)])
-        return [dec(latent_list[i]) for i,dec in enumerate(self.decs)]
-
-    def decode_all(self,x):
-        return [dec(x) for dec in self.decs]
 
 def make_ae(aeid,device,NZ,image_size,num_channels):
     enc_b1, enc_b2 = get_enc_blocks(device,NZ,num_channels)
@@ -461,7 +427,7 @@ def get_vision_dset(dset_name,device,x_only=False):
     elif dset_name == 'letterAJ':
         data = load_letterAJ(x_only)
         return TransformDataset(data,[add_colour_dimension],x_only,device=device)
-    return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device,augment=True)
+    return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
 
 def get_dloader(raw_data,x_only,batch_size,device,random=True):
     ds = get_dset(raw_data,x_only,device=device)
@@ -472,69 +438,6 @@ def get_dloader(raw_data,x_only,batch_size,device,random=True):
 def get_dset(raw_data,x_only,device,tfms=None):
     transforms = tfms if tfms else [to_float_tensor,add_colour_dimension]
     return TransformDataset(raw_data,transforms,x_only=x_only,device=device)
-
-def prune(enc,dec,lin,idx):
-    orig_enc_size = enc[1][3][0].weight.shape[0]
-    orig_dec_size = dec.main[0].weight.shape[0]
-    orig_lin_size0 = lin.weight.shape[0]
-    orig_lin_size1 = lin.weight.shape[1]
-    assert orig_lin_size0==orig_lin_size1
-    try: assert orig_enc_size == orig_dec_size and orig_enc_size == orig_lin_size0
-    except: set_trace()
-    enc[1][3][0].weight=nn.Parameter(torch.cat([enc[1][3][0].weight[:idx],enc[1][3][0].weight[idx+1:]],0))
-    enc[1][3][0].out_channels -= 1
-    enc[1][3][2].weight=nn.Parameter(torch.cat([enc[1][3][2].weight[:idx],enc[1][3][2].weight[idx+1:]]))
-    enc[1][3][2].bias=nn.Parameter(torch.cat([enc[1][3][2].bias[:idx],enc[1][3][2].bias[idx+1:]]))
-    enc[1][3][2].running_mean=torch.cat([enc[1][3][2].running_mean[:idx],enc[1][3][2].running_mean[idx+1:]])
-    enc[1][3][2].running_var=torch.cat([enc[1][3][2].running_var[:idx],enc[1][3][2].running_var[idx+1:]])
-    enc[1][3][2].num_features-=1
-    dec.main[0].weight=nn.Parameter(torch.cat([dec.main[0].weight[:idx],dec.main[0].weight[idx+1:]],0))
-    dec.main[0].in_channels -= 1
-    lin.weight = nn.Parameter(torch.cat([lin.weight[:,:idx],lin.weight[:,idx+1:]],dim=1))
-    lin.weight = nn.Parameter(torch.cat([lin.weight[:idx],lin.weight[idx+1:]]))
-    lin.bias = nn.Parameter(torch.cat([lin.bias[:idx],lin.bias[idx+1:]]))
-    final_enc_size = enc[1][3][0].weight.shape[0]
-    final_dec_size = dec.main[0].weight.shape[0]
-    final_lin_size0 = lin.weight.shape[0]
-    final_lin_size1 = lin.weight.shape[1]
-    try:
-        assert final_enc_size == final_dec_size
-        assert final_dec_size == orig_dec_size-1
-        assert final_lin_size0 == final_lin_size1
-        assert final_lin_size0 == orig_dec_size-1
-    except:
-        set_trace()
-
-def duplicate_dim(enc,dec,lin,idx):
-    orig_enc_size = enc[1][3][0].weight.shape[0]
-    orig_dec_size = dec.main[0].weight.shape[0]
-    orig_lin_size0 = lin.weight.shape[0]
-    orig_lin_size1 = lin.weight.shape[1]
-    assert orig_lin_size0==orig_lin_size1
-    assert orig_enc_size == orig_dec_size
-    enc[1][3][0].weight = nn.Parameter(torch.cat([enc[1][3][0].weight,enc[1][3][0].weight[idx:idx+1]+0.01*torch.randn_like(enc[1][3][0].weight[idx:idx+1])]))
-    enc[1][3][0].out_channels += 1
-    enc[1][3][2].weight = nn.Parameter(torch.cat([enc[1][3][2].weight,enc[1][3][2].weight[idx:idx+1]+0.01*torch.randn_like(enc[1][3][2].weight[idx:idx+1])]))
-    enc[1][3][2].bias = nn.Parameter(torch.cat([enc[1][3][2].bias,enc[1][3][2].bias[idx:idx+1]+0.01*torch.randn_like(enc[1][3][2].bias[idx:idx+1])]))
-    enc[1][3][2].running_mean=torch.cat([enc[1][3][2].running_mean,enc[1][3][2].running_mean[idx:idx+1:]])
-    enc[1][3][2].running_var=torch.cat([enc[1][3][2].running_var,enc[1][3][2].running_var[idx:idx+1:]])
-    enc[1][3][2].num_features+=1
-    dec.main[0].weight=nn.Parameter(torch.cat([dec.main[0].weight,dec.main[0].weight[idx:idx+1:]],0))
-    dec.main[0].in_channels += 1
-    lin.weight = nn.Parameter(torch.cat([lin.weight,lin.weight[:,idx:idx+1]],dim=1))
-    lin.weight = nn.Parameter(torch.cat([lin.weight,lin.weight[idx:idx+1]]))
-    lin.bias = nn.Parameter(torch.cat([lin.bias,lin.bias[idx:idx+1]]))
-    final_enc_size = enc[1][3][0].weight.shape[0]
-    final_dec_size = dec.main[0].weight.shape[0]
-    final_lin_size0 = lin.weight.shape[0]
-    final_lin_size1 = lin.weight.shape[1]
-    try:
-        assert final_enc_size == final_dec_size
-        assert final_dec_size == orig_dec_size+1
-        assert final_lin_size0 == final_lin_size1
-        assert final_lin_size0 == orig_dec_size+1
-    except:
-        set_trace()
 
 def check_ae_images(enc,dec,dataset):
     idxs = np.random.randint(0,len(dataset),size=5*4)
@@ -766,6 +669,31 @@ def np_savez(data_dict,directory,fname):
     check_dir(directory)
     np.savez(os.path.join(directory,fname),**data_dict)
 
+def apply_maybe_multiproc(func,input_list,split,single):
+    if single:
+        output_list = [func(item) for item in input_list]
+    else:
+        list_of_lists = []
+        ctx = mp.get_context("spawn")
+        for i in range(math.ceil(len(input_list)/split)):
+            with ctx.Pool(processes=split) as pool:
+                new_list = pool.map(func, input_list[split*i:split*(i+1)])
+            print(f'finished {i}th split section')
+            list_of_lists.append(new_list)
+        output_list = [item for sublist in list_of_lists for item in sublist]
+    return output_list
+
+def show_gpu_memory():
+    mem_used = 0
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) or hasattr(obj, 'data') and torch.is_tensor(obj.data):
+                mem_used += obj.element_size() * obj.nelement()
+        except: pass
+    print(f"GPU memory usage: {mem_used}")
+
+def rmi_func(pred,gt): return round(mi_func(pred,gt),4)
+def racc(pred,gt): return round(accuracy(pred,gt),4)
 if __name__ == "__main__":
     small_labels = np.array([1,2,3,4,0,4,4])
     big_labels = np.array([0,1,2,3,4,5,5])
