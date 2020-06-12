@@ -83,6 +83,7 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
         ARGS.split = len(aeids)
     print(ARGS)
 
+    exp_dir = utils.set_experiment_dir(ARGS.exp_name,overwrite=ARGS.overwrite)
     new_ae = functools.partial(utils.make_ae,device=ARGS.device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
     dset = utils.get_vision_dset(ARGS.dset,ARGS.device)
     dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
@@ -218,7 +219,6 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
             print(f'Num agree histories: {num_agree_histories}')
             if count == ARGS.patience: break
 
-        exp_dir = f'../{ARGS.dset}/experiments/{ARGS.exp_name}'
         # Save the most accurate ensemble labels and the corresponding indices of agreement
         ensemble_dict = {'ensemble_labels': best_ensemble_labels, 'all_agree': best_all_agree}
         utils.np_savez(ensemble_dict,exp_dir,'best_ensemble')

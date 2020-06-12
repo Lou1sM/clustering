@@ -38,24 +38,6 @@ class AE(nn.Module):
     def first_row(self):
         return self.enc.block1[0][0].weight[0]
 
-class NonsenseDiscriminator(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.db1 = get_reslike_block([1,8,16,32],sz=7)
-        self.db2 = get_reslike_block([32,64,128,256],sz=1)
-        self.fc = nn.Sequential(*layers.bn_drop_lin(256,1 ,bn=False))
-        self.act = nn.Sigmoid()
-
-    def forward(self,inp_):
-        x = self.db1(inp_)
-        x = self.db2(x)
-        out = self.act(self.fc(x[:,:,0,0]))
-        assert out.min() >= 0
-        return out
-
-    def predict(self,inp_):
-        return self.act(self(inp_))
-
 class Generator(nn.Module):
     def __init__(self, nz,ngf,nc,dropout_p=0.):
         super(Generator, self).__init__()
@@ -177,9 +159,6 @@ class EncoderStacked(nn.Module):
     def device(self):
         return self.enc.block1[0][0].weight.device
 
-class Dataholder():
-    def __init__(self,train_data,train_labels): self.train_data,self.train_labels=train_data,train_labels
-
 class TransformDataset_old(data.Dataset):
     def __init__(self,data,transforms,x_only,device):
         self.transform,self.x_only,self.device=compose(transforms),x_only,device
@@ -285,11 +264,12 @@ def get_user_yesno_answer(question):
 
 def set_experiment_dir(exp_name, overwrite):
     exp_name = get_datetime_stamp() if exp_name == "" else exp_name
-    if not os.path.isdir('../experiments/{}'.format(exp_name)): os.mkdir('../experiments/{}'.format(exp_name    ))
+    if not os.path.isdir(f'../experiments/{exp_name}'): os.mkdir(f'../experiments/{exp_name}')
     elif exp_name.startswith('try') or overwrite: pass
-    elif not get_user_yesno_answer('An experiment with name {} has already been run, do you want to overwrite?'.format(exp_name)):
+    elif not get_user_yesno_answer(f'An experiment with name {exp_name} has already been run, do you want to overwrite?'):
         print('Please rerun command with a different experiment name')
         sys.exit()
+    return exp_dir
 
 def noiseify(pytensor,constant):
     noise = torch.randn_like(pytensor)
