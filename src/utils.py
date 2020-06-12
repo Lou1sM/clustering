@@ -17,7 +17,6 @@ import torch
 import torch.nn as nn
 import torchvision.datasets as tdatasets
 import torch.multiprocessing as mp
-import umap.umap_ as umap
 
 
 def reload():
@@ -264,7 +263,8 @@ def get_user_yesno_answer(question):
 
 def set_experiment_dir(exp_name, overwrite):
     exp_name = get_datetime_stamp() if exp_name == "" else exp_name
-    if not os.path.isdir(f'../experiments/{exp_name}'): os.mkdir(f'../experiments/{exp_name}')
+    exp_dir = f'../experiments/{exp_name}'
+    if not os.path.isdir(exp_dir): os.mkdir(exp_dir)
     elif exp_name.startswith('try') or overwrite: pass
     elif not get_user_yesno_answer(f'An experiment with name {exp_name} has already been run, do you want to overwrite?'):
         print('Please rerun command with a different experiment name')
@@ -331,12 +331,6 @@ def get_enc_dec(device, latent_size):
     enc = nn.Sequential(block1,block2)
     dec = Generator(nz=latent_size,ngf=32,nc=1,dropout_p=0.)
     return enc.to(device),dec.to(device)
-
-def get_far_tensor(exemplars_tensor):
-    while True:
-        attempt = normalize(torch.randn_like(exemplars_tensor[0]))
-        dist = torch.min((exemplars_tensor-attempt).norm(dim=1))
-        if dist>1: return attempt
 
 def get_mnist_dloader(x_only=False,device='cuda',bs=64):
     mnist_data=tdatasets.MNIST(root='~/unsupervised_object_learning/data/',train=True,download=True)
