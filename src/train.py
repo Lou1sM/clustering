@@ -176,7 +176,6 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
             if ARGS.conc:
                 concatted_vecs = np.concatenate([v['latents'] for v in vecs],axis=-1)
                 vecs.append({'aeid': 'concat', 'latents': concatted_vecs})
-            print(f"Generating labels for {len(aes)} aes...")
             print(f"Labelling vecs for {len(aes)} aes...")
             labels = utils.apply_maybe_multiproc(filled_label,vecs,split=len(vecs),single=ARGS.single)
             if ARGS.scatter_clusters:
@@ -195,8 +194,10 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
             num_agree_histories.append(all_agree.sum())
             new_best_acc = acc
             print('AE Scores:')
-            print('Accs', [utils.racc(label_dict['labels'],gt_labels) for label_dict in labels.values()])
+            print('Accs', [utils.racc(labels[x]['labels'],gt_labels) for x in aeids])
             print('MIs', [utils.rmi_func(labels[x]['labels'],gt_labels) for x in aeids])
+            print('DAccs', [utils.racc(vecs[x]['direct_labels'],gt_labels) for x in aeids])
+            print('DMIs', [utils.rmi_func(vecs[x]['direct_labels'],gt_labels) for x in aeids])
             print('Ensemble Scores:')
             print('Acc:',acc)
             print('NMI:',mi)

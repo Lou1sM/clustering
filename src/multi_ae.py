@@ -263,13 +263,18 @@ def train_ae(ae_dict,args,targets,all_agree,dset,sharing_ablation):
     if args.vis_train: utils.check_ae_images(ae.enc,ae.dec,dset,stacked=True)
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
+        as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
+        remainder = np.zeros(args.dset_size%args.num_clusters)
+        direct_labels = np.concatenate([as_tens,remainder]).astype(np.int)
     else:
         determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
         for i, (xb,yb,idx) in enumerate(determin_dl):
             latent = ae.enc(xb)
+            new_direct_labels = ae.pred(latent[:,:,0,0]).argmax(dim=-1).detach().cpu().numpy()
             latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
             latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
-    return {'aeid':aeid,'latents':latents}
+            direct_labels = new_direct_labels if i==0 else np.concatenate([direct_labels,new_direct_labels],axis=0)
+    return {'aeid':aeid,'latents':latents,'direct_labels':direct_labels}
 
 def load_ae(aeid,args):
     if args.reload_chkpt == 'none':
