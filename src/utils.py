@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings('ignore')
 from datetime import datetime
 from sklearn.metrics import normalized_mutual_info_score as mi_func
 from fastai import layers
@@ -43,7 +45,7 @@ class Generator(nn.Module):
         self.dropout = torch.nn.Dropout(p=dropout_p)
         self.main = nn.Sequential(
             # input is Z, going into a convolution
-            nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 1, bias=False),
+            nn.ConvTranspose2d(nz, ngf * 8, 4, 1, 1, bias=False),
             nn.BatchNorm2d(ngf * 8),
             nn.ReLU(True),
             self.dropout,
@@ -53,17 +55,17 @@ class Generator(nn.Module):
             nn.ReLU(True),
             self.dropout,
             # state size. (ngf*4) x 8 x 8
-            nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 2),
             nn.ReLU(True),
             self.dropout,
             # state size. (ngf*2) x 16 x 16
-            nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 2, bias=False),
+            nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 2, bias=False),
             nn.BatchNorm2d(ngf),
             nn.ReLU(True),
             self.dropout,
             # state size. (ngf) x 32 x 32
-            nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False),
             nn.Tanh()
             # state size. (nc) x 64 x 64
         )
@@ -78,7 +80,7 @@ class GeneratorStacked(nn.Module):
         self.output_size = output_size
         self.device = device
         self.block1 = nn.Sequential(
-            nn.ConvTranspose2d( nz, 256, 4, 1, 1, bias=False).to(device),
+            nn.ConvTranspose2d(nz, 256, 4, 1, 1, bias=False).to(device),
             nn.BatchNorm2d(ngf * 8).to(device),
             nn.LeakyReLU(0.3),
             self.dropout)
@@ -106,7 +108,7 @@ class GeneratorStacked(nn.Module):
                 nn.LeakyReLU(0.3),
                 self.dropout)
             self.block5 = nn.Sequential(
-                nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=True).to(device),
+                nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=True).to(device),
                 nn.Tanh()
             )
         elif output_size in [32,128]:
@@ -117,7 +119,7 @@ class GeneratorStacked(nn.Module):
                 self.dropout)
             if output_size == 32:
                 self.block5 = nn.Sequential(
-                    nn.ConvTranspose2d( 32, nc, 4, 2, 1, bias=True).to(device),
+                    nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=True).to(device),
                     nn.Tanh()
                 )
             elif output_size == 128:
@@ -130,8 +132,6 @@ class GeneratorStacked(nn.Module):
                     nn.ConvTranspose2d(32, nc, 4, 2, 1, bias=True).to(device),
                     nn.Tanh()
                 )
-
-
 
     def forward(self,inp):
         out = self.block1(inp)
@@ -254,12 +254,12 @@ def add_colour_dimension(item):
 def get_datetime_stamp(): return str(datetime.now()).split()[0][5:] + '_'+str(datetime.now().time()).split()[0][:-7]
 
 def get_user_yesno_answer(question):
-   answer = input(question+'(y/n)')
-   if answer == 'y': return True
-   elif answer == 'n': return False
-   else:
-       print("Please answer 'y' or 'n'")
-       return(get_user_yesno_answer(question))
+    answer = input(question+'(y/n)')
+    if answer == 'y': return True
+    elif answer == 'n': return False
+    else:
+        print("Please answer 'y' or 'n'")
+        return(get_user_yesno_answer(question))
 
 def set_experiment_dir(exp_name, overwrite):
     exp_name = get_datetime_stamp() if exp_name == "" else exp_name
@@ -376,6 +376,9 @@ def get_vision_dset(dset_name,device,x_only=False):
             x = torch.cat([dtrain.data,x])
             y = torch.cat([dtrain.targets,y])
         data = x if x_only else (x,y)
+    elif dset_name == 'MNISTtrain':
+        dtrain=tdatasets.MNIST(root=dirpath,train=True,download=True)
+        data = dtrain.data if x_only else (dtrain.data,dtrain.targets)
     elif dset_name == 'FashionMNIST':
         dtrain=tdatasets.FashionMNIST(root=dirpath,train=True,download=True)
         dtest=tdatasets.FashionMNIST(root=dirpath,train=False,download=True)
@@ -457,10 +460,10 @@ def label_assignment_cost(labels1,labels2,label1,label2):
 
 def translate_labellings(trans_from_labels,trans_to_labels):
     # What you're translating into has to be compressed, otherwise gives wrong results
-    unique_from_labs =  set(trans_from_labels) if isinstance(trans_from_labels,np.ndarray) else trans_from_labels.unique()
-    unique_to_labs =  set(trans_to_labels) if isinstance(trans_to_labels,np.ndarray) else trans_to_labels.unique()
-    num_from_labs =  len([i for i in unique_from_labs if i != -1])
-    num_to_labs =  len([i for i in unique_to_labs if i != -1])
+    unique_from_labs = set(trans_from_labels) if isinstance(trans_from_labels,np.ndarray) else trans_from_labels.unique()
+    unique_to_labs = set(trans_to_labels) if isinstance(trans_to_labels,np.ndarray) else trans_to_labels.unique()
+    num_from_labs = len([i for i in unique_from_labs if i != -1])
+    num_to_labs = len([i for i in unique_to_labs if i != -1])
     if num_from_labs <= num_to_labs:
         return translate_labellings_fanout(trans_from_labels,trans_to_labels)
     else:
