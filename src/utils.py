@@ -314,15 +314,19 @@ def get_reslike_block(nfs,sz):
         *[layers.conv_layer(nfs[i],nfs[i+1],stride=2 if i==0 else 1,leaky=0.3,padding=1)
          for i in range(len(nfs)-1)], nn.AdaptiveMaxPool2d(sz))
 
-def make_ae(aeid,device,NZ,image_size,num_channels):
-    enc_b1, enc_b2 = get_enc_blocks(device,NZ,num_channels)
+def make_ae(aeid,device,NZ,image_size,num_channels,big):
+    enc_b1, enc_b2 = get_enc_blocks(device,NZ,num_channels,big)
     enc = EncoderStacked(enc_b1,enc_b2)
     dec = GeneratorStacked(nz=NZ,ngf=32,nc=num_channels,output_size=image_size,device=device,dropout_p=0.)
     return AE(enc,dec,aeid)
 
-def get_enc_blocks(device, latent_size, num_channels):
-    block1 = get_reslike_block([num_channels,4,8,16,32,64],sz=8)
-    block2 = get_reslike_block([64,128,256,latent_size],sz=1)
+def get_enc_blocks(device, latent_size, num_channels, big):
+    if big:
+        block1 = get_reslike_block([num_channels,4,8,16,32,32,64],sz=8)
+        block2 = get_reslike_block([64,128,128,256,256,latent_size],sz=1)
+    else:
+        block1 = get_reslike_block([num_channels,4,8,16,32,64],sz=8)
+        block2 = get_reslike_block([64,128,256,latent_size],sz=1)
     return block1.to(device), block2.to(device)
 
 def get_enc_dec(device, latent_size):

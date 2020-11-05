@@ -40,6 +40,7 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
         ARGS.pretrain_epochs = 1
         ARGS.max_meta_epochs = 2
 
+    big = False
     if ARGS.dset in ['MNISTfull','FashionMNIST']:
         ARGS.image_size = 28
         ARGS.dset_size = 70000
@@ -60,6 +61,7 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
         ARGS.dset_size = 50000
         ARGS.num_channels = 3
         ARGS.num_clusters = 10
+        big = True
     elif ARGS.dset == 'coil-100':
         ARGS.image_size = 128
         ARGS.dset_size = 7200
@@ -84,7 +86,7 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
     print(ARGS)
 
     exp_dir = utils.set_experiment_dir(ARGS.exp_name,overwrite=ARGS.overwrite)
-    new_ae = functools.partial(utils.make_ae,device=ARGS.device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels)
+    new_ae = functools.partial(utils.make_ae,device=ARGS.device,NZ=ARGS.NZ,image_size=ARGS.image_size,num_channels=ARGS.num_channels,big=big)
     dset = utils.get_vision_dset(ARGS.dset,ARGS.device)
     dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
     determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),ARGS.gen_batch_size,drop_last=False),pin_memory=False)

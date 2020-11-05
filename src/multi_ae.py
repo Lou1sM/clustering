@@ -96,7 +96,7 @@ def label_single(ae_output,args,abl=False):
         else:
             umapped_latents = umap.UMAP(min_dist=0,n_neighbors=umap_neighbours,n_components=2,random_state=42).fit_transform(latents.squeeze())
         if args.clusterer == 'GMM':
-            c = GaussianMixture(n_components=10)
+            c = GaussianMixture(n_components=args.num_clusters)
             labels = c.fit_predict(umapped_latents)
         elif args.clusterer == 'HDBSCAN':
             min_c = args.dset_size//(args.num_clusters*2)
@@ -174,7 +174,9 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     else:
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot='none')
     multihots = utils.compute_multihots(np.stack(same_lang_labels),probs='none')
-    all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)==len(usable_labels))
+    all_agree = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)>=len(usable_labels)/1.2)
+    all_agree_test = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)>=len(usable_labels)/5.2)
+    print(all_agree.sum(), all_agree_test.sum())
     ensemble_labels_ = multihots.argmax(axis=1)
     ensemble_labels = given_gt if given_gt is not 'none' else ensemble_labels_
     centroids_by_id = {}
@@ -217,7 +219,6 @@ def train_ae(ae_dict,args,targets,all_agree,dset,sharing_ablation):
     else:
         targets = torch.tensor(targets,device=args.device)
         full_mask = torch.tensor(all_agree,device=args.device)
-        print(targets)
     for epoch in range(args.epochs):
         total_rloss = 0.
         total_loss = 0.
