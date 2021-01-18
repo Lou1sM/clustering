@@ -91,7 +91,7 @@ if __name__ == "__main__": # Seems necessary to make multiproc work
     dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),ARGS.batch_size,drop_last=True),pin_memory=False)
     determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),ARGS.gen_batch_size,drop_last=False),pin_memory=False)
     filled_pretrain = functools.partial(multi_ae.rtrain_ae,args=ARGS,should_change=True,dset=dset)
-    filled_label = functools.partial(multi_ae.label_single,args=ARGS)
+    filled_label = functools.partial(multi_ae.label_single,args=ARGS,abl=False)
     filled_load_ae = functools.partial(multi_ae.load_ae,args=ARGS)
     filled_load_vecs = functools.partial(multi_ae.load_vecs,args=ARGS)
     filled_load_labels = functools.partial(multi_ae.load_labels,args=ARGS)

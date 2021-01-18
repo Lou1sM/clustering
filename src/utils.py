@@ -2,7 +2,7 @@ import warnings
 warnings.filterwarnings('ignore')
 from datetime import datetime
 from sklearn.metrics import normalized_mutual_info_score as mi_func
-from fastai import layers
+#from fastai import layers
 from pdb import set_trace
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score
@@ -299,7 +299,7 @@ def numpyify(x):
 def scatter_clusters(embeddings,labels,show):
     palette = ['r','k','y','g','b','m','purple','brown','c','orange']
     palette = cm.rainbow(np.linspace(0,1,len(set(labels))))
-    labels =  numpyify([0]*len(embeddings)) if labels is None else numpyify(labels)
+    labels = numpyify([0]*len(embeddings)) if labels is None else numpyify(labels)
     for i,label in enumerate(list(set(labels))):
         plt.scatter(embeddings[labels==label,0], embeddings[labels==label,1], s=0.2, c=[palette[i]], label=i)
     plt.legend()
@@ -420,19 +420,6 @@ def get_dset(raw_data,x_only,device,tfms=None):
     transforms = tfms if tfms else [to_float_tensor,add_colour_dimension]
     return TransformDataset(raw_data,transforms,x_only=x_only,device=device)
 
-def check_ae_images(enc,dec,dataset):
-    idxs = np.random.randint(0,len(dataset),size=5*4)
-    inimgs = dataset[idxs]
-    x = enc(inimgs)
-    outimgs = dec(x)
-    _, axes = plt.subplots(5,4,figsize=(7,7))
-    for i in range(5):
-        axes[i,0].imshow(inimgs[i,0])
-        axes[i,1].imshow(outimgs[i,0])
-        axes[i,2].imshow(inimgs[i+5,0])
-        axes[i,3].imshow(outimgs[i+5,0])
-    plt.show()
-
 def vis_latent(dec,latent): plt.imshow(dec(latent[None,:,None,None].cuda())[0,0]); plt.show()
 
 def check_ohe_latents(dec,t):
@@ -505,7 +492,7 @@ def get_confusion_mat(labels1,labels2):
 
 def debable(labellings_list,pivot):
     labellings_list.sort(key=lambda x: x.max())
-    if pivot is 'none':
+    if pivot == 'none':
         pivot = labellings_list.pop(0)
         translated_list = [pivot]
     else:
@@ -519,7 +506,7 @@ def compute_multihots(l,probs):
     assert len(l) > 0
     mold = np.expand_dims(np.arange(l.max()+1),0) # (num_aes, num_labels)
     hits = (mold==np.expand_dims(l,2)) # (num_aes, dset_size, num_labels)
-    if probs is not 'none': hits = np.expand_dims(probs,2)*hits
+    if probs != 'none': hits = np.expand_dims(probs,2)*hits
     multihots = hits.sum(axis=0) # (dset_size, num_labels)
     return multihots
 
@@ -536,7 +523,7 @@ def check_latents(dec,latents,show,stacked):
 
 def get_num_labels(labels):
     assert labels.ndim == 1
-    return  len(set([l for l in labels if l != -1]))
+    return len(set([l for l in labels if l != -1]))
 
 def dictify_list(x,key):
     assert isinstance(x,list)

@@ -1,45 +1,19 @@
-import gc
 import signal
 import sys
 signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
 
-import torchvision.datasets as tdatasets
-import functools
+from longformer.sliding_chunks import pad_to_window_size
 from pdb import set_trace
-from scipy.stats import entropy
-from time import time
 from torch.utils import data
-import copy
-import gc
 import hdbscan
 from sklearn.mixture import GaussianMixture
 import numpy as np
-import os
-import random
 import torch
 import torch.nn as nn
 import umap
 import utils
 import warnings
 warnings.filterwarnings('ignore')
-from datetime import datetime
-from fastai import datasets,layers
-from pdb import set_trace
-from scipy.optimize import linear_sum_assignment
-from scipy.special import comb, factorial
-from sklearn.metrics import adjusted_rand_score
-from torch.utils import data
-import math
-import matplotlib.cm as cm
-import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
-import numpy as np
-import os
-import sys
-import torch
-import torch.nn as nn
-import torchvision.datasets as tdatasets
-import umap.umap_ as umap
 
 
 def rtrain_ae(ae_dict,args,dset,should_change):
@@ -61,10 +35,10 @@ def rtrain_ae(ae_dict,args,dset,should_change):
             if args.test: break
         print(f'Rtraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
         if args.test: break
-    if should_change:
+    if should_change and args.pretrain_epochs > 0:
         afters = [p.detach().cpu() for p in ae.parameters()]
         for b,a in zip(befores,afters):
-            assert not (b==a).all()
+            assert not (b==a).all() or args.pretrain_epochs == 0
     if args.save:
         utils.torch_save({'enc':ae.enc,'dec':ae.dec}, f'../{args.dset}/checkpoints',f'pretrained{aeid}.pt')
     if args.vis_pretrain:
@@ -92,6 +66,7 @@ def label_single(ae_output,args,abl=False):
     else:
         umap_neighbours = 30*args.dset_size//(70000)
         if abl:
+            print("not umapping")
             umapped_latents = latents
         else:
             umapped_latents = umap.UMAP(min_dist=0,n_neighbors=umap_neighbours,n_components=2,random_state=42).fit_transform(latents.squeeze())
@@ -169,7 +144,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     if len(usable_labels) == 0:
         most_common_num_labels = max(nums_labels, key=lambda x: counts[x])
         usable_labels = {aeid:result['labels'] for aeid,result in vecs_and_labels.items() if utils.get_num_labels(result['labels']) == most_common_num_labels}
-    if pivot is not 'none' and args.num_clusters == utils.num_labs(pivot):
+    if pivot != 'none' and args.num_clusters == utils.num_labs(pivot):
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot=pivot)
     else:
         same_lang_labels = utils.debable(list(usable_labels.values()),pivot='none')
@@ -178,13 +153,13 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     all_agree_test = np.ones(multihots.shape[0]).astype(np.bool) if args.test else (multihots.max(axis=1)>=len(usable_labels)/5.2)
     print(all_agree.sum(), all_agree_test.sum())
     ensemble_labels_ = multihots.argmax(axis=1)
-    ensemble_labels = given_gt if given_gt is not 'none' else ensemble_labels_
+    ensemble_labels = given_gt if given_gt != 'none' else ensemble_labels_
     centroids_by_id = {}
     for l in same_lang_labels+[ensemble_labels]: print({i:(l==i).sum() for i in set(l)}) # Size of clusters
     for aeid in set(usable_labels.keys()):
         new_centroid_info={'aeid':aeid}
         if aeid == 'concat': continue
-        if  not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
+        if not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             continue
         latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
         try:
@@ -221,7 +196,6 @@ def train_ae(ae_dict,args,targets,all_agree,dset,sharing_ablation):
         full_mask = torch.tensor(all_agree,device=args.device)
     for epoch in range(args.epochs):
         total_rloss = 0.
-        total_loss = 0.
         total_gloss = 0.
         for i, (xb,yb,idx) in enumerate(dl):
             latent  = ae.enc(xb)
@@ -277,6 +251,56 @@ def train_ae(ae_dict,args,targets,all_agree,dset,sharing_ablation):
             direct_labels = new_direct_labels if i==0 else np.concatenate([direct_labels,new_direct_labels],axis=0)
     return {'aeid':aeid,'latents':latents,'direct_labels':direct_labels}
 
+def train_transformer(transformer_dict,args,targets,all_agree,dset):
+    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
+    tran_id, transformer, pred = transformer_dict['tran_id'],transformer_dict['transformer'],transformer_dict['pred']
+    befores = [p.detach().cpu() for p in list(transformer.parameters())]
+    ce_loss_func = nn.CrossEntropyLoss()
+    opt = torch.optim.Adam(params = transformer.parameters(), lr=args.enc_lr)
+    targets = torch.tensor(targets,device=args.device)
+    full_mask = torch.tensor(all_agree,device=args.device)
+    for epoch in range(args.epochs):
+        total_loss = 0.
+        for i, (xb,yb,idx) in enumerate(dl):
+            mask = full_mask[idx]
+            batch_targets = targets[idx]
+            max_in_batch = max([len(item) for item in xb])
+            attention_mask = torch.stack([torch.arange(max_in_batch) < len(item) for item in xb]).long()
+            padded = torch.tensor([item + [1]*(max_in_batch - len(item)) for item in xb]).long()
+            padded, attention_mask = pad_to_window_size(padded, attention_mask, 512, 1)
+            transformed_word_vecs = transformer(padded, attention_mask=attention_mask)[0]
+            # Zero out indices of padding
+            s = transformed_word_vecs*(attention_mask.unsqueeze(-1))
+            # Take mean of non-zero vectors
+            doc_feature_vecs = s.sum(axis=1)/(attention_mask.sum(axis=1).unsqueeze(1))
+            lin_pred = pred(utils.noiseify(doc_feature_vecs[mask],args.noise)[:,:,0,0])
+            loss = ce_loss_func(lin_pred,batch_targets[mask]).mean()
+            total_loss = total_loss*((i+1)/(i+2)) + loss.mean().item()*(1/(i+2))
+            assert loss != 0
+            loss.backward(); opt.step(); opt.zero_grad()
+            if args.test: break
+        print(f'Trans: {tran_id}, Epoch: {epoch} Loss: {round(total_loss,3)}')
+        if args.test: break
+
+    afters = [p.detach().cpu() for p in list(transformer.parameters())]
+    for b,a in zip(befores,afters): assert not (b==a).all()
+    if args.save:
+        utils.torch_save({'transformer':transformer}, f'../{args.dset}/checkpoints/{args.exp_name}',f'{aeid}.pt')
+    if args.test:
+        latents = np.random.random((args.dset_size,50)).astype(np.float32)
+        as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
+        remainder = np.zeros(args.dset_size%args.num_clusters)
+        direct_labels = np.concatenate([as_tens,remainder]).astype(np.int)
+    else:
+        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
+        for i, (xb,yb,idx) in enumerate(determin_dl):
+            latent = ae.enc(xb)
+            new_direct_labels = ae.pred(latent[:,:,0,0]).argmax(dim=-1).detach().cpu().numpy()
+            latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
+            latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
+            direct_labels = new_direct_labels if i==0 else np.concatenate([direct_labels,new_direct_labels],axis=0)
+    return {'aeid':aeid,'latents':latents,'direct_labels':direct_labels}
+
 def load_ae(aeid,args):
     if args.reload_chkpt == 'none':
         path = f'../{args.dset}/checkpoints/pretrained{aeid}.pt'
@@ -307,6 +331,3 @@ def load_ensemble(aeids,args):
     ensemble_labels = np.load(f'../{args.dset}/ensemble_labels.npy')
     all_agree = np.load(f'../{args.dset}/all_agree.npy')
     return centroids_by_id, ensemble_labels, all_agree
-
-
-
