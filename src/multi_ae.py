@@ -1,7 +1,6 @@
 import signal
 import sys
 signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
-
 from longformer.sliding_chunks import pad_to_window_size
 from pdb import set_trace
 from torch.utils import data
@@ -13,7 +12,21 @@ import torch.nn as nn
 import umap
 import utils
 import warnings
+import functools
 warnings.filterwarnings('ignore')
+
+
+def jagged_collate(datalist,device):
+    hiddens, labels, idx = zip(*datalist)
+    lengths = [h.shape[0] for h in hiddens]
+    max_len = max(lengths)
+    n_ftrs = len(hiddens[0][0])
+    padded_hiddens = torch.zeros((len(datalist),max_len,n_ftrs),device=device)
+    for i,(h,length) in enumerate(zip(hiddens,lengths)):
+        h_tensor = torch.tensor(h,device=device)
+        try: padded_hiddens[i] = torch.cat([h_tensor,torch.zeros((max_len-length,n_ftrs),device=h.device)])
+        except: set_trace()
+    return padded_hiddens, lengths, torch.tensor(idx,device=device)
 
 
 def rtrain_ae(ae_dict,args,dset,should_change):
@@ -56,8 +69,54 @@ def rtrain_ae(ae_dict,args,dset,should_change):
             utils.np_save(array=latents,directory=f'../{args.dset}/vecs/',fname=f'latents{ae.identifier}.npy',verbose=True)
     return {'aeid':aeid,'latents':latents}
 
-def label_single(ae_output,args,abl=False):
-    aeid,latents = ae_output['aeid'],ae_output['latents']
+def rtrain_trans(trans_dict,args,dset,should_change):
+    """For now, this func just generates vecs, doesn't pretrain."""
+    filled_jagged_collate = functools.partial(jagged_collate,device=args.device)
+    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False,collate_fn=filled_jagged_collate)
+    model_id,transformer = trans_dict['model_id'],trans_dict['model']
+    transformer.train()
+    print(f'Rtraining {model_id}')
+    #befores = [p.detach().cpu().clone() for p in transformer.parameters()]
+    #loss_func=nn.L1Loss(reduction='none')
+    #opt = torch.optim.Adam(params = transformer.parameters(), lr=args.enc_lr)
+    #for epoch in range(args.pretrain_epochs):
+    #    total_loss = 0.
+    #    for i,(xb,yb,idx) in enumerate(dl):
+    #        latent = ae.enc(xb)
+    #        pred = ae.dec(utils.noiseify(latent,args.noise))
+    #        loss = loss_func(pred,xb).mean()
+    #        loss.backward(); opt.step(); opt.zero_grad()
+    #        total_loss = total_loss*(i+1)/(i+2) + loss.item()/(i+2)
+    #        if args.test: break
+    #    print(f'Rtraining AE {aeid}, Epoch: {epoch}, Loss {round(total_loss,4)}')
+    #    if args.test: break
+    #if should_change and args.pretrain_epochs > 0:
+    #    afters = [p.detach().cpu() for p in ae.parameters()]
+    #    for b,a in zip(befores,afters):
+    #        assert not (b==a).all() or args.pretrain_epochs == 0
+    if args.save:
+        utils.torch_save({'model':transformer}, f'../{args.dset}/checkpoints',f'pretrained{model_id}.pt')
+    # Now generate latent vecs for dataset
+    if args.test:
+        all_pooled_latents = np.random.random((args.dset_size,50)).astype(np.float32)
+    else:
+        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False,collate_fn=filled_jagged_collate)
+        transformer.eval()
+        for i, (hiddens,lengths,idx) in enumerate(determin_dl):
+            if i%100 == 0: print(i)
+            max_len = max(lengths)
+            global_attention_mask = torch.tensor([[i<l for i in range(max_len)] for l in lengths],device=args.device)
+            outputs = predict_batch(transformer,hiddens,lengths,args.device)
+            latents = outputs[1][-1]
+            pooled_latents = latents.sum(axis=1)/global_attention_mask.sum(axis=1,keepdim=True)
+            pooled_latents = pooled_latents.detach().cpu().numpy()
+            all_pooled_latents = pooled_latents if i==0 else np.concatenate([all_pooled_latents,pooled_latents],axis=0)
+        if args.save:
+            utils.np_save(array=all_pooled_latents,directory=f'../{args.dset}/vecs/',fname=f'latents{model_id}.npy',verbose=True)
+    return {'model_id':model_id,'all_pooled_latents':all_pooled_latents}
+
+def label_single(output,args,abl=False):
+    model_id,all_pooled_latents = output['model_id'],output['all_pooled_latents']
     if args.test:
         as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
         remainder = np.zeros(args.dset_size%args.num_clusters)
@@ -65,11 +124,12 @@ def label_single(ae_output,args,abl=False):
         umapped_latents = None
     else:
         umap_neighbours = 30*args.dset_size//(70000)
+        #umap_neighbours = 3
         if abl:
             print("not umapping")
-            umapped_latents = latents
+            umapped_latents = all_pooled_latents
         else:
-            umapped_latents = umap.UMAP(min_dist=0,n_neighbors=umap_neighbours,n_components=2,random_state=42).fit_transform(latents.squeeze())
+            umapped_latents = umap.UMAP(min_dist=0,n_neighbors=umap_neighbours,n_components=2,random_state=42).fit_transform(all_pooled_latents.squeeze())
         if args.clusterer == 'GMM':
             c = GaussianMixture(n_components=args.num_clusters)
             labels = c.fit_predict(umapped_latents)
@@ -80,7 +140,7 @@ def label_single(ae_output,args,abl=False):
             if utils.get_num_labels(scanner.labels_) == args.num_clusters:
                 labels = scanner.labels_
             elif utils.get_num_labels(scanner.labels_) > args.num_clusters:
-                print(f"AE {aeid} has too MANY labels: {utils.get_num_labels(scanner.labels_)}")
+                print(f"model {model_id} has too MANY labels: {utils.get_num_labels(scanner.labels_)}")
                 eps = 0.01
                 for i in range(1000):
                     labels = hdbscan.hdbscan_._tree_to_labels(umapped_latents, scanner.single_linkage_tree_.to_numpy(), cluster_selection_epsilon=eps, min_cluster_size=min_c)[0]
@@ -93,7 +153,7 @@ def label_single(ae_output,args,abl=False):
                         eps -= 0.001
             else:
                 eps = 1.
-                print(f"AE {aeid} has too FEW labels: {utils.get_num_labels(scanner.labels_)}")
+                print(f"model {model_id} has too FEW labels: {utils.get_num_labels(scanner.labels_)}")
                 best_eps = eps
                 most_n = 0
                 for i in range(1000):
@@ -103,7 +163,7 @@ def label_single(ae_output,args,abl=False):
                         most_n = n
                         best_eps = eps
                     if n == args.num_clusters:
-                        print(f'ae {aeid} using {eps}')
+                        print(f'model {model_id} using {eps}')
                         break
                     elif set(labels) == set([-1]):
                         while True:
@@ -113,7 +173,7 @@ def label_single(ae_output,args,abl=False):
                                 print('having to use min_c', min_c)
                                 break
                             elif n > args.num_clusters:
-                                print(f"{aeid} overshot inner to {n} with {min_c}, {eps}")
+                                print(f"{model_id} overshot inner to {n} with {min_c}, {eps}")
                                 best_eps += 0.01
                                 if best_eps >= 100: break
                             else:
@@ -126,15 +186,15 @@ def label_single(ae_output,args,abl=False):
                             print(n,i)
                         eps -= 0.01
                     else:
-                        print(f'ae {aeid} overshot to {n} with {eps} at {i}')
+                        print(f'model {model_id} overshot to {n} with {eps} at {i}')
                         eps *= 1.1
             if utils.get_num_labels(labels) != args.num_clusters:
-                print(f'WARNING: {aeid} has only {n} clusters, {min_c}, {eps}')
+                print(f'WARNING: {model_id} has only {n} clusters, {min_c}, {eps}')
 
         if args.save:
-            utils.np_save(labels,f'../{args.dset}/labels',f'labels{aeid}.npy',verbose=False)
-            utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{aeid}.npy',verbose=False)
-    return {'aeid':aeid,'umapped_latents':umapped_latents,'labels':labels}
+            utils.np_save(labels,f'../{args.dset}/labels',f'labels{model_id}.npy',verbose=False)
+            utils.np_save(umapped_latents,f'../{args.dset}/umaps',f'latent_umaps{model_id}.npy',verbose=False)
+    return {'model_id':model_id,'umapped_latents':umapped_latents,'labels':labels}
 
 def build_ensemble(vecs_and_labels,args,pivot,given_gt):
     nums_labels = [utils.get_num_labels(ae_results['labels']) for ae_results in vecs_and_labels.values()]
@@ -161,7 +221,7 @@ def build_ensemble(vecs_and_labels,args,pivot,given_gt):
         if aeid == 'concat': continue
         if not all([((ensemble_labels==i)*all_agree).any() for i in sorted(set(ensemble_labels))]):
             continue
-        latent_centroids = np.stack([vecs_and_labels[aeid]['latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
+        latent_centroids = np.stack([vecs_and_labels[aeid]['all_pooled_latents'][(ensemble_labels==i)*all_agree].mean(axis=0) for i in sorted(set(ensemble_labels)) if i!= -1])
         try:
             assert (latent_centroids == latent_centroids).all()
         except: set_trace()
@@ -251,9 +311,21 @@ def train_ae(ae_dict,args,targets,all_agree,dset,sharing_ablation):
             direct_labels = new_direct_labels if i==0 else np.concatenate([direct_labels,new_direct_labels],axis=0)
     return {'aeid':aeid,'latents':latents,'direct_labels':direct_labels}
 
+def predict_batch(transformer,hiddens,lengths,device):
+    max_len = max(lengths)
+    global_attention_mask = torch.tensor([[i<l for i in range(max_len)] for l in lengths],device=device)
+    outputs = transformer(inputs_embeds=hiddens,global_attention_mask=global_attention_mask)
+    #max_in_batch = max([len(item) for item in batch_input])
+    #attention_mask = torch.stack([torch.arange(max_in_batch) < len(item) for item in batch_input]).long().to(device)
+    #padded = torch.tensor([item + [1]*(max_in_batch - len(item)) for item in batch_input]).long().to(device)
+    #padded, attention_mask = pad_to_window_size(padded, attention_mask, 512, 1)
+    #all_outputs = model(padded, attention_mask=attention_mask)
+    return outputs
+
 def train_transformer(transformer_dict,args,targets,all_agree,dset):
-    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False)
-    tran_id, transformer, pred = transformer_dict['tran_id'],transformer_dict['transformer'],transformer_dict['pred']
+    filled_jagged_collate = functools.partial(jagged_collate,device=args.device)
+    dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.RandomSampler(dset),args.batch_size,drop_last=True),pin_memory=False, collate_fn=filled_jagged_collate)
+    model_id, transformer = transformer_dict['model_id'],transformer_dict['model']
     befores = [p.detach().cpu() for p in list(transformer.parameters())]
     ce_loss_func = nn.CrossEntropyLoss()
     opt = torch.optim.Adam(params = transformer.parameters(), lr=args.enc_lr)
@@ -261,59 +333,63 @@ def train_transformer(transformer_dict,args,targets,all_agree,dset):
     full_mask = torch.tensor(all_agree,device=args.device)
     for epoch in range(args.epochs):
         total_loss = 0.
-        for i, (xb,yb,idx) in enumerate(dl):
+        for i, (hiddens,lengths,idx) in enumerate(dl):
+            if i%100 == 0: print(i)
             mask = full_mask[idx]
-            batch_targets = targets[idx]
-            max_in_batch = max([len(item) for item in xb])
-            attention_mask = torch.stack([torch.arange(max_in_batch) < len(item) for item in xb]).long()
-            padded = torch.tensor([item + [1]*(max_in_batch - len(item)) for item in xb]).long()
-            padded, attention_mask = pad_to_window_size(padded, attention_mask, 512, 1)
-            transformed_word_vecs = transformer(padded, attention_mask=attention_mask)[0]
-            # Zero out indices of padding
-            s = transformed_word_vecs*(attention_mask.unsqueeze(-1))
-            # Take mean of non-zero vectors
-            doc_feature_vecs = s.sum(axis=1)/(attention_mask.sum(axis=1).unsqueeze(1))
-            lin_pred = pred(utils.noiseify(doc_feature_vecs[mask],args.noise)[:,:,0,0])
-            loss = ce_loss_func(lin_pred,batch_targets[mask]).mean()
-            total_loss = total_loss*((i+1)/(i+2)) + loss.mean().item()*(1/(i+2))
-            assert loss != 0
+            batch_targets = targets[idx][mask]
+            preds = predict_batch(transformer,hiddens,lengths,args.device)[0][mask]
+            loss = ce_loss_func(preds,batch_targets).mean()
+            #assert loss != 0
+            if loss == 0: set_trace()
             loss.backward(); opt.step(); opt.zero_grad()
             if args.test: break
-        print(f'Trans: {tran_id}, Epoch: {epoch} Loss: {round(total_loss,3)}')
+        print(f'Trans: {model_id}, Epoch: {epoch} Loss: {round(total_loss,3)}')
         if args.test: break
 
     afters = [p.detach().cpu() for p in list(transformer.parameters())]
-    for b,a in zip(befores,afters): assert not (b==a).all()
+    #for b,a in zip(befores,afters): assert not (b==a).all()
     if args.save:
-        utils.torch_save({'transformer':transformer}, f'../{args.dset}/checkpoints/{args.exp_name}',f'{aeid}.pt')
+        utils.torch_save({'model':transformer}, f'../{args.dset}/checkpoints/{args.exp_name}',f'{model_id}.pt')
     if args.test:
         latents = np.random.random((args.dset_size,50)).astype(np.float32)
         as_tens = np.tile(np.arange(args.num_clusters),args.dset_size//args.num_clusters)
         remainder = np.zeros(args.dset_size%args.num_clusters)
         direct_labels = np.concatenate([as_tens,remainder]).astype(np.int)
+        all_pooled_latents = np.random.random((args.dset_size,768)).astype(np.float32)
     else:
-        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False)
-        for i, (xb,yb,idx) in enumerate(determin_dl):
-            latent = ae.enc(xb)
-            new_direct_labels = ae.pred(latent[:,:,0,0]).argmax(dim=-1).detach().cpu().numpy()
-            latent = latent.view(latent.shape[0],-1).detach().cpu().numpy()
-            latents = latent if i==0 else np.concatenate([latents,latent],axis=0)
+        determin_dl = data.DataLoader(dset,batch_sampler=data.BatchSampler(data.SequentialSampler(dset),args.gen_batch_size,drop_last=False),pin_memory=False,collate_fn=filled_jagged_collate)
+        transformer.eval()
+        for i, (hiddens,lengths,idx) in enumerate(determin_dl):
+            if i%100 == 0: print(i)
+            max_len = max(lengths)
+            global_attention_mask = torch.tensor([[i<l for i in range(max_len)] for l in lengths],device=args.device)
+            #outputs = predict_batch(transformer,hiddens,lengths,args.device)
+            preds, latents = predict_batch(transformer,hiddens,lengths,args.device)
+            new_direct_labels = preds.argmax(axis=1)
+            new_direct_labels = new_direct_labels.detach().cpu().numpy()
             direct_labels = new_direct_labels if i==0 else np.concatenate([direct_labels,new_direct_labels],axis=0)
-    return {'aeid':aeid,'latents':latents,'direct_labels':direct_labels}
+            #latents = outputs[1][-1]
+            pooled_latents = latents[-1].sum(axis=1)/global_attention_mask.sum(axis=1,keepdim=True)
+            pooled_latents = pooled_latents.detach().cpu().numpy()
+            all_pooled_latents = pooled_latents if i==0 else np.concatenate([all_pooled_latents,pooled_latents],axis=0)
+    return {'model_id':model_id,'direct_labels':direct_labels,'all_pooled_latents':all_pooled_latents}
 
-def load_ae(aeid,args):
+def load_model(model_id,args):
     if args.reload_chkpt == 'none':
-        path = f'../{args.dset}/checkpoints/pretrained{aeid}.pt'
+        path = f'../{args.dset}/checkpoints/pretrained{model_id}.pt'
     else:
-        path = f'../{args.dset}/checkpoints/{args.reload_chkpt}/{aeid}.pt'
+        path = f'../{args.dset}/checkpoints/{args.reload_chkpt}/{model_id}.pt'
     print('Loading from',path)
     chkpt = torch.load(path, map_location=args.device)
-    revived_ae = utils.AE(chkpt['enc'],chkpt['dec'],aeid)
-    return {'aeid': aeid, 'ae':revived_ae}
+    if args.model_type == 'ae':
+        revived_model = utils.AE(chkpt['enc'],chkpt['dec'],model_id)
+    else:
+        revived_model = chkpt['model']
+    return {'model_id': model_id, 'model':revived_model}
 
-def load_vecs(aeid,args):
-    latents = np.load(f'../{args.dset}/vecs/latents{aeid}.npy')
-    return {'aeid':aeid, 'latents':latents}
+def load_vecs(model_id,args):
+    all_pooled_latents = np.load(f'../{args.dset}/vecs/latents{model_id}.npy')
+    return {'model_id':model_id, 'all_pooled_latents':all_pooled_latents}
 
 def load_labels(aeid,args):
     labels = np.load(f'../{args.dset}/labels/labels{aeid}.npy')

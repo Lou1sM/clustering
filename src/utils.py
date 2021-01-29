@@ -264,7 +264,7 @@ def get_user_yesno_answer(question):
 def set_experiment_dir(exp_name, overwrite):
     exp_name = get_datetime_stamp() if exp_name == "" else exp_name
     exp_dir = f'../experiments/{exp_name}'
-    if not os.path.isdir(exp_dir): os.mkdir(exp_dir)
+    if not os.path.isdir(exp_dir): os.makedirs(exp_dir)
     elif exp_name.startswith('try') or overwrite: pass
     elif not get_user_yesno_answer(f'An experiment with name {exp_name} has already been run, do you want to overwrite?'):
         print('Please rerun command with a different experiment name')
