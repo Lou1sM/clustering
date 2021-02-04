@@ -1,10 +1,11 @@
 import argparse
 
+
 def get_argparse():
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--ae_range',type=int,nargs='+')
-    group.add_argument('--ids',type=int,nargs='+')
+    group.add_argument('--model_ids',type=int,nargs='+')
     group.add_argument('--num_aes',type=int)
     parser.add_argument('--NZ',type=int,default=50)
     parser.add_argument('--batch_size',type=int,default=64)
@@ -18,7 +19,7 @@ def get_argparse():
     parser.add_argument('--epochs',type=int,default=8)
     parser.add_argument('--exp_name',type=str,default='try')
     parser.add_argument('--gen_batch_size',type=int,default=100)
-    parser.add_argument('--gpu',type=str,default='0')
+    parser.add_argument('--gpus',type=str,nargs='+',default=['0'])
     parser.add_argument('--inter_epochs',type=int,default=8)
     parser.add_argument('--max_meta_epochs',type=int,default=30)
     parser.add_argument('--model_type',type=str,default='transformer',choices=['transformer','ae'])

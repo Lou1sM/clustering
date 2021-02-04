@@ -2,7 +2,7 @@ import warnings
 warnings.filterwarnings('ignore')
 from datetime import datetime
 from sklearn.metrics import normalized_mutual_info_score as mi_func
-#from fastai import layers
+from fastai import layers
 from pdb import set_trace
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score
@@ -374,11 +374,11 @@ def get_vision_dset(dset_name,device,x_only=False):
     dirpath = f'~/unsupervised_object_learning/{dset_name}/data'
     if dset_name in ['MNISTfull', 'MNISTtest']:
         dtest=tdatasets.MNIST(root=dirpath,train=False,download=True)
-        x, y = dtest.data, dtest.targets
+        x, y = dtest.test_data, dtest.test_labels
         if dset_name == 'MNISTfull':
             dtrain=tdatasets.MNIST(root=dirpath,train=True,download=True)
-            x = torch.cat([dtrain.data,x])
-            y = torch.cat([dtrain.targets,y])
+            x = torch.cat([dtrain.train_data,x])
+            y = torch.cat([dtrain.train_labels,y])
         data = x if x_only else (x,y)
     elif dset_name == 'MNISTtrain':
         dtrain=tdatasets.MNIST(root=dirpath,train=True,download=True)
@@ -643,10 +643,11 @@ def apply_maybe_multiproc(func,input_list,split,single):
     else:
         list_of_lists = []
         ctx = mp.get_context("spawn")
-        for i in range(math.ceil(len(input_list)/split)):
+        num_splits = math.ceil(len(input_list)/split)
+        for i in range(num_splits):
             with ctx.Pool(processes=split) as pool:
                 new_list = pool.map(func, input_list[split*i:split*(i+1)])
-            print(f'finished {i}th split section')
+            if num_splits != 1: print(f'finished {i}th split section')
             list_of_lists.append(new_list)
         output_list = [item for sublist in list_of_lists for item in sublist]
     return output_list
