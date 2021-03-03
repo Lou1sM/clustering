@@ -8,7 +8,6 @@ from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score
 from torch.utils import data
 import gc
-import kornia
 import math
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -174,7 +173,7 @@ class TransformDataset_old(data.Dataset):
 class TransformDataset(data.Dataset):
     def __init__(self,data,transforms,x_only,device,augment=False):
         self.x_only,self.device,self.augment=x_only,device,augment
-        self.aug = kornia.augmentation.RandomAffine(degrees=(-10,10),translate=(0.1,0.1),return_transform=True)
+        ##self.aug = kornia.augmentation.RandomAffine(degrees=(-10,10),translate=(0.1,0.1),return_transform=True)
         if x_only:
             self.x = data
             for transform in transforms:
@@ -221,9 +220,9 @@ def augment_batch(batch_tensor):
     center[..., 0] = batch_tensor.shape[3] / 2
     center[..., 1] = batch_tensor.shape[2] / 2
     scale = torch.ones(batch_size)
-    M = kornia.get_rotation_matrix2d(center, angle, scale)
+    ##M = kornia.get_rotation_matrix2d(center, angle, scale)
     _, _, h, w = batch_tensor.shape
-    batch_tensor_warped = kornia.warp_affine(batch_tensor, M, dsize=(h, w))
+    ##batch_tensor_warped = kornia.warp_affine(batch_tensor, M, dsize=(h, w))
     if orig_size == 3:
         batch_tensor_warped=batch_tensor_warped.squeeze(0)
     return batch_tensor_warped
@@ -297,9 +296,9 @@ def numpyify(x):
     elif torch.is_tensor(x): return x.detach().cpu().numpy()
 
 def scatter_clusters(embeddings,labels,show):
-    palette = ['r','k','y','g','b','m','purple','brown','c','orange']
-    palette = cm.rainbow(np.linspace(0,1,len(set(labels))))
+    palette = ['r','k','y','g','b','m','purple','brown','c','orange','thistle','lightseagreen','sienna']
     labels = numpyify([0]*len(embeddings)) if labels is None else numpyify(labels)
+    palette = cm.rainbow(np.linspace(0,1,len(set(labels))))
     for i,label in enumerate(list(set(labels))):
         plt.scatter(embeddings[labels==label,0], embeddings[labels==label,1], s=0.2, c=[palette[i]], label=i)
     plt.legend()
@@ -449,29 +448,57 @@ def label_assignment_cost(labels1,labels2,label1,label2):
     assert len(labels1) == len(labels2), f"len labels1 {len(labels1)} must equal len labels2 {len(labels2)}"
     return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
 
-def translate_labellings(trans_from_labels,trans_to_labels):
+def translate_labellings(trans_from_labels,trans_to_labels,subsample_size):
     # What you're translating into has to be compressed, otherwise gives wrong results
-    unique_from_labs = set(trans_from_labels) if isinstance(trans_from_labels,np.ndarray) else trans_from_labels.unique()
-    unique_to_labs = set(trans_to_labels) if isinstance(trans_to_labels,np.ndarray) else trans_to_labels.unique()
-    num_from_labs = len([i for i in unique_from_labs if i != -1])
-    num_to_labs = len([i for i in unique_to_labs if i != -1])
+    assert trans_from_labels.shape == trans_to_labels.shape
+    num_from_labs = get_num_labels(trans_from_labels)
+    num_to_labs = get_num_labels(trans_to_labels)
+    assert subsample_size is 'none' or subsample_size > min(num_from_labs,num_to_labs)
     if num_from_labs <= num_to_labs:
-        return translate_labellings_fanout(trans_from_labels,trans_to_labels)
+        return translate_labellings_fanout(trans_from_labels,trans_to_labels,subsample_size)
     else:
-        return translate_labellings_fanin(trans_from_labels,trans_to_labels)
+        return translate_labellings_fanin(trans_from_labels,trans_to_labels,subsample_size)
 
-def translate_labellings_fanout(trans_from_labels,trans_to_labels):
-    cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(trans_from_labels) if l1 != -1])
+def translate_labellings_fanout(trans_from_labels,trans_to_labels,subsample_size):
+    unique_trans_from_labels = unique_labels(trans_from_labels)
+    unique_trans_to_labels = unique_labels(trans_to_labels)
+    if subsample_size is 'none':
+        cost_matrix = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in unique_trans_to_labels if l2 != -1] for l1 in unique_trans_from_labels if l1 != -1])
+    else:
+        num_trys = 0
+        while True:
+            num_trys += 1
+            if num_trys == 5: set_trace()
+            sample_indices = np.random.choice(range(trans_from_labels.shape[0]),subsample_size,replace=False)
+            trans_from_labels_subsample = trans_from_labels[sample_indices]
+            trans_to_labels_subsample = trans_to_labels[sample_indices]
+            if unique_labels(trans_from_labels_subsample) == unique_trans_from_labels and unique_labels(trans_from_labels_subsample) == unique_trans_to_labels: break
+        cost_matrix = np.array([[label_assignment_cost(trans_from_labels_subsample,trans_to_labels_subsample,l1,l2) for l2 in unique_trans_from_labels if l2 != -1] for l1 in unique_trans_from_labels if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
     return np.array([-1 if l == -1 else col_ind[l] for l in trans_from_labels])
 
-def translate_labellings_fanin(trans_from_labels,trans_to_labels):
-    cost_matrix = np.array([[label_assignment_cost(trans_to_labels,trans_from_labels,l1,l2) for l2 in set(trans_from_labels) if l2 != -1] for l1 in set(trans_to_labels) if l1 != -1])
+def translate_labellings_fanin(trans_from_labels,trans_to_labels,subsample_size):
+    unique_trans_from_labels = unique_labels(trans_from_labels)
+    unique_trans_to_labels = unique_labels(trans_to_labels)
+    if subsample_size is 'none':
+        cost_matrix = np.array([[label_assignment_cost(trans_to_labels,trans_from_labels,l1,l2) for l2 in unique_trans_from_labels if l2 != -1] for l1 in unique_trans_to_labels if l1 != -1])
+    else:
+        while True: # Keep trying random indices unitl you reach one that contains all labels
+            sample_indices = np.random.choice(range(trans_from_labels.shape[0]),subsample_size,replace=False)
+            trans_from_labels_subsample = trans_from_labels[sample_indices]
+            trans_to_labels_subsample = trans_to_labels[sample_indices]
+            if unique_labels(trans_from_labels_subsample) == unique_trans_from_labels and unique_labels(trans_from_labels_subsample) == unique_trans_to_labels: break
+        sample_indices = np.random.choice(range(trans_from_labels.shape[0]),subsample_size,replace=False)
+        trans_from_labels_subsample = trans_from_labels[sample_indices]
+        trans_to_labels_subsample = trans_to_labels[sample_indices]
+        cost_matrix = np.array([[label_assignment_cost(trans_to_labels_subsample,trans_from_labels_subsample,l1,l2) for l2 in unique_trans_from_labels if l2 != -1] for l1 in unique_trans_to_labels if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     assert len(col_ind) == get_num_labels(trans_to_labels)
     untranslated = [i for i in range(cost_matrix.shape[1]) if i not in col_ind]
-    cost_matrix2 = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in set(trans_to_labels) if l2 != -1] for l1 in set(untranslated) if l1 != -1])
+    unique_untranslated = unique_labels(untranslated)
+    # Now assign the additional, unassigned items
+    cost_matrix2 = np.array([[label_assignment_cost(trans_from_labels,trans_to_labels,l1,l2) for l2 in unique_trans_to_labels if l2 != -1] for l1 in unique_untranslated if l1 != -1])
     row_ind2, col_ind2 = linear_sum_assignment(cost_matrix2)
     cl = col_ind.tolist()
     trans_dict = {f:cl.index(f) for f in cl}
@@ -521,9 +548,19 @@ def check_latents(dec,latents,show,stacked):
     if show: plt.show()
     plt.clf()
 
+def unique_labels(labels):
+    if isinstance(labels,np.ndarray) or isinstance(labels,list):
+        return set(labels)
+    elif isinstance(labels,torch.Tensor):
+        unique_tensor = labels.unique()
+        return set(unique_tensor.tolist())
+    else:
+        print("Unrecognized type for labels:", type(labels))
+        raise TypeError
+
 def get_num_labels(labels):
     assert labels.ndim == 1
-    return len(set([l for l in labels if l != -1]))
+    return  len([l for l in unique_labels(labels) if l != -1])
 
 def dictify_list(x,key):
     assert isinstance(x,list)
@@ -531,16 +568,9 @@ def dictify_list(x,key):
     assert isinstance(x[0],dict)
     return {item[key]: item for item in x}
 
-def accuracy(labels1,labels2):
-    try:
-        trans_labels = translate_labellings(compress_labels(labels1),compress_labels(labels2))
-        return sum(trans_labels==labels2)/len(labels1)
-    except Exception as e:
-        print(e)
-        set_trace()
-        trans_labels = translate_labellings(labels1,labels2)
-        print("Couldn't compute accuracy by translating, returning adjusted_rand_score instead")
-        return adjusted_rand_score(labels1,labels2)
+def accuracy(labels1,labels2,subsample_size='none'):
+    trans_labels = translate_labellings(compress_labels(labels1),compress_labels(labels2),subsample_size)
+    return sum(trans_labels==numpyify(labels2))/len(labels1)
 
 def compress_labels(labels):
     if isinstance(labels,torch.Tensor): labels = labels.detach().cpu().numpy()
@@ -555,7 +585,6 @@ def mlp(inp_size,hidden_size,outp_size,device):
     return nn.Sequential(l1,l2,l3).to(device)
 
 def num_labs(labels): return len(set([l for l in labels if l != -1]))
-def same_num_labs(labels1,labels2): num_labs(labels1) == num_labs(labels2)
 
 def cont_factorial(x): return (x/np.e)**x*(2*np.pi*x)**(1/2)*(1+1/(12*x))
 def cont_choose(ks): return cont_factorial(np.sum(ks))/np.prod([cont_factorial(k) for k in ks if k > 0])
