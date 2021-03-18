@@ -5,7 +5,7 @@ import kornia
 import torch
 import os
 import numpy as np
-from utils import compose, to_float_tensor, add_colour_dimension
+from .utils import compose, to_float_tensor, add_colour_dimension
 
 class TransformDataset_old(data.Dataset):
     def __init__(self,data,transforms,x_only,device):
@@ -50,8 +50,8 @@ class KwargTransformDataset(data.Dataset):
         self.transform,self.device=compose(transforms),device
         self.data_names = []
         self.num_datas = len(kwdata)
-        for data_name, data in kwdata.items():
-            setattr(self,data_name,data.to(device))
+        for data_name, d in kwdata.items():
+            setattr(self,data_name,d.to(device))
             self.data_names.append(data_name)
         assert len(self.data_names) == self.num_datas
     def __len__(self): return len(getattr(self,self.data_names[0]))
@@ -78,11 +78,10 @@ def augment_batch(batch_tensor):
     return batch_tensor_warped
 
 
-
-def get_mnist_dloader(x_only=False,device='cuda',bs=64):
+def get_mnist_dloader(x_only=False,device='cuda',batch_size=64,shuffle=True):
     mnist_data=tdatasets.MNIST(root='~/unsupervised_object_learning/data/',train=True,download=True)
-    data = mnist_data.train_data if x_only else mnist_data
-    mnist_dl = get_dloader(raw_data=data,x_only=x_only,batch_size=bs,device=device)
+    data = mnist_data.data if x_only else mnist_data.data, mnist_data.targets
+    mnist_dl = get_dloader(raw_data=data,x_only=x_only,batch_size=batch_size,device=device,shuffle=shuffle)
     return mnist_dl
 
 def get_mnist_dset(device='cuda',x_only=False):
@@ -153,9 +152,9 @@ def get_vision_dset(dset_name,device,x_only=False):
         return TransformDataset(data,[add_colour_dimension],x_only,device=device)
     return TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
 
-def get_dloader(raw_data,x_only,batch_size,device,random=True):
+def get_dloader(raw_data,x_only,batch_size,device,shuffle):
     ds = get_dset(raw_data,x_only,device=device)
-    if random: s=data.BatchSampler(data.RandomSampler(ds),batch_size,drop_last=True)
+    if shuffle: s=data.BatchSampler(data.RandomSampler(ds),batch_size,drop_last=True)
     else: s=data.BatchSampler(data.SequentialSampler(ds),batch_size,drop_last=True)
     return data.DataLoader(ds,batch_sampler=s,pin_memory=False)
 
@@ -169,6 +168,7 @@ def check_ae_images(enc,dec,dataset):
     x = enc(inimgs)
     outimgs = dec(x)
     _, axes = plt.subplots(5,4,figsize=(7,7))
+    inimgs, outimgs = inimgs.detach().cpu(), outimgs.detach().cpu()
     for i in range(5):
         axes[i,0].imshow(inimgs[i,0])
         axes[i,1].imshow(outimgs[i,0])
@@ -181,19 +181,3 @@ def vis_latent(dec,latent): plt.imshow(dec(latent[None,:,None,None].cuda())[0,0]
 def check_ohe_latents(dec,t):
     for t in range(dec.main[0].weight.shape[0]):
         vis_latent(dec,(torch.arange(dec.main[0].weight.shape[0])==t).float().cuda())
-
-def check_ae_images(enc,dec,dataset,num_rows=5,stacked=False):
-    idxs = np.random.randint(0,len(dataset),size=num_rows*4)
-    inimgs = dataset[idxs][0]
-    x = enc(inimgs)[-1] if stacked else enc(inimgs)
-    outimgs = dec(x)[-1] if stacked else dec(x)
-    _, axes = plt.subplots(num_rows,4,figsize=(7,7))
-    inimgs, outimgs = inimgs.detach().cpu(), outimgs.detach().cpu()
-    for i in range(num_rows):
-        axes[i,0].imshow(inimgs[i,0])
-        axes[i,1].imshow(outimgs[i,0])
-        axes[i,2].imshow(inimgs[i+num_rows,0])
-        axes[i,3].imshow(outimgs[i+num_rows,0])
-    plt.show()
-
-

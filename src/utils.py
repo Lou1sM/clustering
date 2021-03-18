@@ -87,15 +87,16 @@ def numpyify(x):
     elif isinstance(x,list): return np.array(x)
     elif torch.is_tensor(x): return x.detach().cpu().numpy()
 
-def scatter_clusters(embeddings,labels,show):
+def scatter_clusters(embeddings,labels,show=False):
+    fig, ax = plt.subplots()
     palette = ['r','k','y','g','b','m','purple','brown','c','orange','thistle','lightseagreen','sienna']
     labels = numpyify([0]*len(embeddings)) if labels is None else numpyify(labels)
     palette = cm.rainbow(np.linspace(0,1,len(set(labels))))
     for i,label in enumerate(list(set(labels))):
-        plt.scatter(embeddings[labels==label,0], embeddings[labels==label,1], s=0.2, c=[palette[i]], label=i)
-    plt.legend()
+        ax.scatter(embeddings[labels==label,0], embeddings[labels==label,1], s=0.2, c=[palette[i]], label=i)
+    ax.legend()
     if show: plt.show()
-    return plt
+    return ax
 
 def print_tensors(*tensors):
     print(*[t.item() for t in tensors])
@@ -311,7 +312,7 @@ def torch_save(checkpoint,directory,fname):
     check_dir(directory)
     torch.save(checkpoint,os.path.join(directory,fname))
 
-def np_save(array,directory,fname,verbose):
+def np_save(array,directory,fname,verbose=False):
     check_dir(directory)
     save_path = os.path.join(directory,fname)
     if verbose: print('Saving to', save_path)
