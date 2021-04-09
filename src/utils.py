@@ -224,6 +224,10 @@ def get_num_labels(labels):
     assert labels.ndim == 1
     return  len([l for l in unique_labels(labels) if l != -1])
 
+def label_counts(labels):
+    assert labels.ndim == 1
+    return {x:sum(labels==x) for x in unique_labels(labels)}
+
 def dictify_list(x,key):
     assert isinstance(x,list)
     assert len(x) > 0
