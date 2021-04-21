@@ -106,22 +106,36 @@ def asMinutes(s):
     s -= m * 60
     return '%dm %ds' % (m, s)
 
+def get_label_counts(labels):
+    return {item:(labels==item).sum() for item in unique_labels(labels)}
 def label_assignment_cost(labels1,labels2,label1,label2):
     assert len(labels1) == len(labels2), f"len labels1 {len(labels1)} must equal len labels2 {len(labels2)}"
     return len([idx for idx in range(len(labels2)) if labels1[idx]==label1 and labels2[idx] != label2])
 
-def translate_labellings(trans_from_labels,trans_to_labels,subsample_size):
-    # What you're translating into has to be compressed, otherwise gives wrong results
+def get_trans_dict(trans_from_labels,trans_to_labels,subsample_size):
+    # First compress each labelling, retain compression dicts
+    trans_from_labels, tdf, _ = compress_labels(trans_from_labels)
+    trans_to_labels, tdt, _ = compress_labels(trans_to_labels)
+    reverse_tdf = {v:k for k,v in tdf.items()}
+    reverse_tdt = {v:k for k,v in tdt.items()}
     assert trans_from_labels.shape == trans_to_labels.shape
     num_from_labs = get_num_labels(trans_from_labels)
     num_to_labs = get_num_labels(trans_to_labels)
     assert subsample_size is 'none' or subsample_size > min(num_from_labs,num_to_labs)
     if num_from_labs <= num_to_labs:
-        return translate_labellings_fanout(trans_from_labels,trans_to_labels,subsample_size)
+        trans_dict =  get_fanout_trans_dict(trans_from_labels,trans_to_labels,subsample_size)
+        leftovers = np.array([x for x in unique_labels(trans_to_labels) if x not in trans_dict.values()])
     else:
-        return translate_labellings_fanin(trans_from_labels,trans_to_labels,subsample_size)
+        trans_dict,leftovers = get_fanin_trans_dict(trans_from_labels,trans_to_labels,subsample_size)
+    # Account for the possible changes in the above compression
+    trans_dict = {reverse_tdf[k]:reverse_tdt[v] for k,v in trans_dict.items()}
+    return trans_dict,leftovers
 
-def translate_labellings_fanout(trans_from_labels,trans_to_labels,subsample_size):
+def translate_labellings(trans_from_labels,trans_to_labels,subsample_size):
+    trans_dict, leftovers = get_trans_dict(trans_from_labels,trans_to_labels,subsample_size)
+    return np.array([trans_dict[l] for l in trans_from_labels])
+
+def get_fanout_trans_dict(trans_from_labels,trans_to_labels,subsample_size):
     unique_trans_from_labels = unique_labels(trans_from_labels)
     unique_trans_to_labels = unique_labels(trans_to_labels)
     if subsample_size is 'none':
@@ -137,10 +151,13 @@ def translate_labellings_fanout(trans_from_labels,trans_to_labels,subsample_size
             if unique_labels(trans_from_labels_subsample) == unique_trans_from_labels and unique_labels(trans_from_labels_subsample) == unique_trans_to_labels: break
         cost_matrix = np.array([[label_assignment_cost(trans_from_labels_subsample,trans_to_labels_subsample,l1,l2) for l2 in unique_trans_from_labels if l2 != -1] for l1 in unique_trans_from_labels if l1 != -1])
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
-    return np.array([-1 if l == -1 else col_ind[l] for l in trans_from_labels])
+    try: assert len(col_ind) == len(set(trans_from_labels[trans_from_labels != -1]))
+    except: set_trace()
+    trans_dict = {l:col_ind[l] for l in unique_labels(trans_from_labels)}
+    trans_dict[-1] = -1
+    return trans_dict
 
-def translate_labellings_fanin(trans_from_labels,trans_to_labels,subsample_size):
+def get_fanin_trans_dict(trans_from_labels,trans_to_labels,subsample_size):
     unique_trans_from_labels = unique_labels(trans_from_labels)
     unique_trans_to_labels = unique_labels(trans_to_labels)
     if subsample_size is 'none':
@@ -166,7 +183,7 @@ def translate_labellings_fanin(trans_from_labels,trans_to_labels,subsample_size)
     trans_dict = {f:cl.index(f) for f in cl}
     for u,t in zip(untranslated,col_ind2): trans_dict[u]=t
     trans_dict[-1] = -1
-    return np.array([trans_dict[i] for i in trans_from_labels])
+    return trans_dict, unique_untranslated
 
 def get_confusion_mat(labels1,labels2):
     if max(labels1) != max(labels2):
@@ -235,14 +252,17 @@ def dictify_list(x,key):
     return {item[key]: item for item in x}
 
 def accuracy(labels1,labels2,subsample_size='none'):
-    trans_labels = translate_labellings(compress_labels(labels1),compress_labels(labels2),subsample_size)
+    trans_labels = translate_labellings(labels1,labels2,subsample_size)
     return sum(trans_labels==numpyify(labels2))/len(labels1)
 
 def compress_labels(labels):
     if isinstance(labels,torch.Tensor): labels = labels.detach().cpu().numpy()
-    x = sorted([i for i in set(labels) if i != -1])
-    new_labels = np.array([l if l == -1 else x.index(l) for l in labels])
-    return new_labels
+    x = sorted([l for l in set(labels) if l != -1])
+    trans_dict = {l:x.index(l) for l in set(labels) if l != -1}
+    trans_dict[-1] = -1
+    new_labels = np.array([trans_dict[l] for l in labels])
+    changed = any([k!=v for k,v in trans_dict.items()])
+    return new_labels,trans_dict,changed
 
 def num_labs(labels): return len(set([l for l in labels if l != -1]))
 
