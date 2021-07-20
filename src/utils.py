@@ -196,7 +196,7 @@ def get_confusion_mat(labels1,labels2):
     confusion_matrix[idx,idx]=0
     return confusion_matrix
 
-def debable(labellings_list,pivot):
+def debable(labellings_list,pivot,subsample_size='none'):
     labellings_list.sort(key=lambda x: x.max())
     if pivot == 'none':
         pivot = labellings_list.pop(0)
@@ -204,7 +204,7 @@ def debable(labellings_list,pivot):
     else:
         translated_list = []
     for not_lar in labellings_list:
-        not_lar_translated = translate_labellings(not_lar,pivot)
+        not_lar_translated = translate_labellings(not_lar,pivot,subsample_size)
         translated_list.append(not_lar_translated)
     return translated_list
 

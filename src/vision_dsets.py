@@ -5,7 +5,7 @@ import kornia
 import torch
 import os
 import numpy as np
-from .utils import compose, to_float_tensor, add_colour_dimension
+from utils import compose, to_float_tensor, add_colour_dimension
 
 class TransformDataset_old(data.Dataset):
     def __init__(self,data,transforms,x_only,device):
