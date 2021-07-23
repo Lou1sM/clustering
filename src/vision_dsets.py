@@ -77,43 +77,8 @@ def augment_batch(batch_tensor):
         batch_tensor_warped=batch_tensor_warped.squeeze(0)
     return batch_tensor_warped
 
-
-def get_mnist_dloader(x_only=False,device='cuda',batch_size=64,shuffle=True):
-    mnist_data=tdatasets.MNIST(root='~/unsupervised_object_learning/data/',train=True,download=True)
-    data = mnist_data.data if x_only else mnist_data.data, mnist_data.targets
-    mnist_dl = get_dloader(raw_data=data,x_only=x_only,batch_size=batch_size,device=device,shuffle=shuffle)
-    return mnist_dl
-
-def get_mnist_dset(device='cuda',x_only=False):
-    mnist_data=tdatasets.MNIST(root='~/unsupervised_object_learning/MNIST/data',train=True,download=True)
-    data = mnist_data.train_data if x_only else mnist_data
-    mnist_dataset = TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
-    return mnist_dataset
-
-def get_fashionmnist_dset(device='cuda',x_only=False):
-    fashionmnist_data=tdatasets.FashionMNIST(root='~/unsupervised_object_learning/FashionMNIST/data',train=True,download=True)
-    data = fashionmnist_data.train_data if x_only else fashionmnist_data
-    fashionmnist_dataset = TransformDataset(data,[to_float_tensor,add_colour_dimension],x_only,device=device)
-    return fashionmnist_dataset
-
-def load_coil100(x_only, data_dir='../coil-100'):
-    images = np.stack([plt.imread(os.path.join(data_dir,x)) for x in os.listdir(data_dir) if x.startswith('obj')])
-    labels = [int(x.split('_')[0][3:]) for x in os.listdir(data_dir) if x.startswith('obj')]
-    if x_only:
-        return torch.tensor(images)
-    else:
-        return torch.tensor(images), torch.tensor(labels)
-
-def load_letterAJ(x_only, data_dir='../letterAJ'):
-    images = np.load(os.path.join(data_dir,'data','ajimages.npy'))
-    labels = np.load(os.path.join(data_dir,'labels','gt_labels.npy'))
-    if x_only:
-        return torch.tensor(images)
-    else:
-        return torch.tensor(images), torch.tensor(labels)
-
 def get_vision_dset(dset_name,device,x_only=False):
-    dirpath = f'~/unsupervised_object_learning/{dset_name}/data'
+    dirpath = f'../{dset_name}/data'
     if dset_name in ['MNISTfull', 'MNISTtest']:
         dtest=tdatasets.MNIST(root=dirpath,train=False,download=True)
         x, y = dtest.data, dtest.targets
